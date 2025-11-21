@@ -1,0 +1,272 @@
+import os
+import json
+import random
+import chess
+from PIL import Image
+import tkinter as tk
+from PIL import ImageTk
+
+# ----------------------
+# Paramètres
+# ----------------------
+BOARD_IMAGE = "C:\\Users\\marti\\Downloads\\ChessTerm-wip-visualization\\img\\plateau.png"
+PIECES_DIR = "C:\\Users\\marti\\Downloads\\ChessTerm-wip-visualization\\img"
+SQUARE_SIZE = 60
+OUTPUT_DIR = "boards"
+GIF_FILE = "match_ai_vs_ai.gif"
+MEMOIRE_FILE = "memoire.json"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+PIECE_IMAGES = {
+    'P': "pion_blanc.png", 'N': "cavalier_blanc.png", 'B': "fou_blanc.png",
+    'R': "tour_blanche.png", 'Q': "reine_blanche.png", 'K': "roi_blanc.png",
+    'p': "pion_noir.png", 'n': "cavalier_noir.png", 'b': "fou_noir.png",
+    'r': "tour_noire.png", 'q': "reine_noire.png", 'k': "roi_noir.png",
+}
+
+pieces_images = {}
+for k,fname in PIECE_IMAGES.items():
+    path = os.path.join(PIECES_DIR,fname)
+    pieces_images[k] = Image.open(path).convert("RGBA").resize(
+        (SQUARE_SIZE, SQUARE_SIZE),
+        Image.Resampling.LANCZOS
+    )
+
+board_img = Image.open(BOARD_IMAGE).convert("RGBA").resize(
+    (SQUARE_SIZE*8, SQUARE_SIZE*8),
+    Image.Resampling.LANCZOS
+)
+
+PIECE_VALUES = {chess.PAWN:100, chess.KNIGHT:320, chess.BISHOP:330,
+                chess.ROOK:500, chess.QUEEN:900, chess.KING:20000}
+
+# ----------------------
+# Mémoire
+# ----------------------
+if os.path.exists(MEMOIRE_FILE):
+    try:
+        with open(MEMOIRE_FILE,"r") as f:
+            memoire = json.load(f)
+    except json.JSONDecodeError:
+        print(f"Avertissement : {MEMOIRE_FILE} vide ou corrompu. Nouvelle mémoire initialisée.")
+        memoire = {}
+else:
+    memoire = {}
+
+def save_memoire():
+    with open(MEMOIRE_FILE,"w") as f:
+        json.dump(memoire,f,indent=2)
+    
+def update_memory(fen, best_move, eval_score):
+    """Ajoute ou met à jour une position dans la mémoire d'apprentissage."""
+    if fen not in memoire:
+        memoire[fen] = {
+            "best_move": best_move.uci(),
+            "scores": [eval_score]
+        }
+    else:
+        memoire[fen]["scores"].append(eval_score)
+        memoire[fen]["best_move"] = best_move.uci()
+
+# ----------------------
+# Evaluation simple
+# ----------------------
+CENTER_SQUARES = [chess.D4, chess.E4, chess.D5, chess.E5]
+
+def evaluate_board(board):
+    if board.is_game_over():
+        if board.is_checkmate():
+            return -999999 if board.turn else 999999
+        return 0  # pat, répétition, 50 coups, etc.
+
+    score = 0
+
+    # 1. Matériel (conserve ton dictionnaire PIECE_VALUES)
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece:
+            value = PIECE_VALUES[piece.piece_type]
+            sign = 1 if piece.color == chess.WHITE else -1
+            score += sign * value
+
+            # 2. Contrôle du centre
+            if sq in CENTER_SQUARES:
+                score += 15 * sign
+
+    # 3. Mobilité
+    mobility = len(list(board.legal_moves))
+    score += (mobility * 2 if board.turn == chess.WHITE else -mobility * 2)
+
+    # 4. Roi plus en sécurité si roqué
+    wk, bk = board.king(chess.WHITE), board.king(chess.BLACK)
+
+    def king_safety(board, king_sq, color):
+        if board.is_check():
+            return -200 if color == chess.WHITE else 200
+        rank = chess.square_rank(king_sq)
+        # Roi mieux en arrière
+        if color == chess.WHITE:
+            return (rank == 0) * 40
+        else:
+            return (rank == 7) * -40
+
+    score += king_safety(board, wk, chess.WHITE)
+    score += king_safety(board, bk, chess.BLACK)
+
+    return score
+
+def evaluate_board(board):
+    if board.is_checkmate():
+        return -999999 if board.turn else 999999
+    if board.is_stalemate():
+        return 0
+    eval_value = 0
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece:
+            value = PIECE_VALUES[piece.piece_type]
+            sign = 1 if piece.color == chess.WHITE else -1
+            eval_value += sign*value
+    return eval_value
+
+# ----------------------
+# Minimax alpha-beta avec mémoire
+# ----------------------
+def minimax(board, depth, alpha, beta, maximizing):
+    fen = board.board_fen()
+    if fen in memoire:
+        scores = memoire[fen]["scores"]
+        avg = sum(scores) / len(scores)
+        return avg, chess.Move.from_uci(memoire[fen]["best_move"])
+    if depth==0 or board.is_game_over():
+        return evaluate_board(board), None
+    
+    moves = list(board.legal_moves)
+    # Tri rapide : captures prioritaires pour alpha-beta
+    moves.sort(key=lambda m: 0 if board.is_capture(m) else 1)
+
+    best_move = None
+    if maximizing:
+        max_eval = -10**9
+        for move in moves:
+            board.push(move)
+            eval_score,_ = minimax(board, depth-1, alpha, beta, False)
+            board.pop()
+            if eval_score > max_eval:
+                max_eval = eval_score
+                best_move = move
+            alpha = max(alpha, eval_score)
+            if beta <= alpha: break
+        if best_move:
+            update_memory(fen, best_move, min_eval)
+        return max_eval,best_move
+    else:
+        min_eval = 10**9
+        for move in moves:
+            board.push(move)
+            eval_score,_ = minimax(board, depth-1, alpha, beta, True)
+            board.pop()
+            if eval_score < min_eval:
+                min_eval = eval_score
+                best_move = move
+            beta = min(beta, eval_score)
+            if beta <= alpha: break
+        if best_move:
+            update_memory(fen, best_move, max_eval)
+        return min_eval,best_move
+
+# ----------------------
+# Bot évolutif
+# ----------------------
+class EvolvingBot:
+    def __init__(self,color,start_depth=3,growth_rate=6,max_depth=5,name="Bot"):
+        self.color=color
+        self.depth=start_depth
+        self.start_depth=start_depth
+        self.growth_rate=growth_rate
+        self.max_depth=max_depth
+        self.name=name
+        self.ply_count=0
+
+    def maybe_evolve(self):
+        new_depth = min(self.max_depth,self.start_depth + self.ply_count//self.growth_rate)
+        if new_depth != self.depth:
+            print(f"{self.name} évolue : {self.depth} -> {new_depth}")
+            self.depth = new_depth
+
+    def select_move(self,board):
+        self.ply_count += 1
+        self.maybe_evolve()
+        score,move = minimax(board,self.depth,-10**9,10**9,self.color==chess.WHITE)
+        if move is None:
+            moves = list(board.legal_moves)
+            return random.choice(moves) if moves else None
+        return move
+
+# ----------------------
+# Dessin plateau
+# ----------------------
+def draw_board_with_pieces(board):
+    img = board_img.copy()
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece:
+            file = chess.square_file(sq)
+            rank = 7 - chess.square_rank(sq)
+            x = file*SQUARE_SIZE
+            y = rank*SQUARE_SIZE
+            img.paste(pieces_images[piece.symbol()],(x,y),pieces_images[piece.symbol()])
+    return img
+
+# ----------------------
+# Partie GUI
+# ----------------------
+def play_game_gui(bot_white, bot_black, max_moves=60, delay=500):
+    board = chess.Board()
+    frames = []
+    move_number = 0
+
+    root = tk.Tk()
+    root.title("Échiquier en direct")
+    canvas = tk.Label(root)
+    canvas.pack()
+
+    # Affichage initial
+    img = draw_board_with_pieces(board)
+    tk_img = ImageTk.PhotoImage(img)
+    canvas.config(image=tk_img)
+    canvas.image = tk_img
+
+    def update():
+        nonlocal move_number
+        if not board.is_game_over() and move_number < max_moves:
+            bot = bot_white if board.turn == chess.WHITE else bot_black
+            move = bot.select_move(board)
+            if move is not None:
+                board.push(move)
+                move_number += 1
+                print(f"{move_number:03d} {'White' if board.turn==chess.BLACK else 'Black'}: {move} (depth {bot.depth})")
+                img = draw_board_with_pieces(board)
+                tk_img = ImageTk.PhotoImage(img)
+                canvas.config(image=tk_img)
+                canvas.image = tk_img
+                frames.append(img)
+            root.after(delay, update)
+        else:
+            save_memoire()
+            print("Partie terminée:", board.result())
+            if frames:
+                frames[0].save(GIF_FILE, save_all=True, append_images=frames[1:], duration=delay, loop=0)
+                print(f"GIF enregistré : {GIF_FILE}")
+
+
+    root.after(1000, update)
+    root.mainloop()
+
+# ----------------------
+# Lancement
+# ----------------------
+if __name__=="__main__":
+    white_bot = EvolvingBot(chess.WHITE, start_depth=6, growth_rate=5, max_depth=10, name="Alpha")
+    black_bot = EvolvingBot(chess.BLACK, start_depth=6, growth_rate=5, max_depth=10, name="Beta")
+    play_game_gui(white_bot, black_bot, max_moves=60, delay=800)
