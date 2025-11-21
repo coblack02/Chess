@@ -2,9 +2,8 @@ import os
 import json
 import random
 import chess
-from PIL import Image
+from PIL import Image, ImageTk
 import tkinter as tk
-from PIL import ImageTk
 
 # ----------------------
 # Paramètres
@@ -13,7 +12,7 @@ BOARD_IMAGE = "C:\\Users\\marti\\Downloads\\ChessTerm-wip-visualization\\img\\pl
 PIECES_DIR = "C:\\Users\\marti\\Downloads\\ChessTerm-wip-visualization\\img"
 SQUARE_SIZE = 60
 OUTPUT_DIR = "boards"
-GIF_FILE = "match_ai_vs_ai.gif"
+GIF_FILE = "match_vs_human.gif"
 MEMOIRE_FILE = "memoire.json"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -25,8 +24,8 @@ PIECE_IMAGES = {
 }
 
 pieces_images = {}
-for k,fname in PIECE_IMAGES.items():
-    path = os.path.join(PIECES_DIR,fname)
+for k, fname in PIECE_IMAGES.items():
+    path = os.path.join(PIECES_DIR, fname)
     pieces_images[k] = Image.open(path).convert("RGBA").resize(
         (SQUARE_SIZE, SQUARE_SIZE),
         Image.Resampling.LANCZOS
@@ -40,97 +39,86 @@ board_img = Image.open(BOARD_IMAGE).convert("RGBA").resize(
 PIECE_VALUES = {chess.PAWN:100, chess.KNIGHT:320, chess.BISHOP:330,
                 chess.ROOK:500, chess.QUEEN:900, chess.KING:20000}
 
+CENTER_SQUARES = [chess.D4, chess.E4, chess.D5, chess.E5]
+
 # ----------------------
 # Mémoire
 # ----------------------
 if os.path.exists(MEMOIRE_FILE):
     try:
-        with open(MEMOIRE_FILE,"r") as f:
+        with open(MEMOIRE_FILE, "r") as f:
             memoire = json.load(f)
     except json.JSONDecodeError:
-        print(f"Avertissement : {MEMOIRE_FILE} vide ou corrompu. Nouvelle mémoire initialisée.")
+        print("Mémoire corrompue. Nouvelle mémoire créée.")
         memoire = {}
 else:
     memoire = {}
 
 def save_memoire():
-    with open(MEMOIRE_FILE,"w") as f:
-        json.dump(memoire,f,indent=2)
-    
-def update_memory(fen, best_move, eval_score):
-    """Ajoute ou met à jour une position dans la mémoire d'apprentissage."""
+    with open(MEMOIRE_FILE, "w") as f:
+        json.dump(memoire, f, indent=2)
+
+def update_memory(fen, move, eval_score):
+    uci = move.uci()
     if fen not in memoire:
-        memoire[fen] = {
-            "best_move": best_move.uci(),
-            "scores": [eval_score]
-        }
-    else:
-        memoire[fen]["scores"].append(eval_score)
-        memoire[fen]["best_move"] = best_move.uci()
+        memoire[fen] = {"moves": {}}
+    if "moves" not in memoire[fen]:
+        memoire[fen]["moves"] = {}
+    if uci not in memoire[fen]["moves"]:
+        memoire[fen]["moves"][uci] = []
+    memoire[fen]["moves"][uci].append(eval_score)
 
 # ----------------------
 # Evaluation simple
 # ----------------------
-CENTER_SQUARES = [chess.D4, chess.E4, chess.D5, chess.E5]
-
 def evaluate_board(board):
-    if board.is_game_over():
-        if board.is_checkmate():
-            return -999999 if board.turn else 999999
-        return 0  # pat, répétition, 50 coups, etc.
+    if board.is_checkmate():
+        return -999999 if board.turn else 999999
+    if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_fifty_moves():
+        return 0
 
     score = 0
-
-    # 1. Matériel (conserve ton dictionnaire PIECE_VALUES)
     for sq in chess.SQUARES:
         piece = board.piece_at(sq)
         if piece:
             value = PIECE_VALUES[piece.piece_type]
             sign = 1 if piece.color == chess.WHITE else -1
             score += sign * value
-
-            # 2. Contrôle du centre
             if sq in CENTER_SQUARES:
                 score += 15 * sign
 
-    # 3. Mobilité
     mobility = len(list(board.legal_moves))
-    score += (mobility * 2 if board.turn == chess.WHITE else -mobility * 2)
+    score += (mobility*2 if board.turn == chess.WHITE else -mobility*2)
 
-    # 4. Roi plus en sécurité si roqué
-    wk, bk = board.king(chess.WHITE), board.king(chess.BLACK)
-
-    def king_safety(board, king_sq, color):
-        if board.is_check():
-            return -200 if color == chess.WHITE else 200
-        rank = chess.square_rank(king_sq)
-        # Roi mieux en arrière
-        if color == chess.WHITE:
-            return (rank == 0) * 40
-        else:
-            return (rank == 7) * -40
-
-    score += king_safety(board, wk, chess.WHITE)
-    score += king_safety(board, bk, chess.BLACK)
-
+    for color in [chess.WHITE, chess.BLACK]:
+        king_sq = board.king(color)
+        if king_sq is not None:
+            if board.is_check():
+                score += -200 if color == chess.WHITE else 200
+            rank = chess.square_rank(king_sq)
+            if color == chess.WHITE and rank == 0:
+                score += 40
+            if color == chess.BLACK and rank == 7:
+                score -= 40
     return score
-
-
 
 # ----------------------
 # Minimax alpha-beta avec mémoire
 # ----------------------
-def minimax(board, depth, alpha, beta, maximizing):
+def minimax(board, depth, alpha, beta, maximizing, ignore_memory=False):
     fen = board.board_fen()
-    if fen in memoire:
-        scores = memoire[fen]["scores"]
-        avg = sum(scores) / len(scores)
-        return avg, chess.Move.from_uci(memoire[fen]["best_move"])
-    if depth==0 or board.is_game_over():
+    if not ignore_memory and fen in memoire and "moves" in memoire[fen] and memoire[fen]["moves"]:
+        moves_data = memoire[fen]["moves"]
+        best_uci = max(moves_data, key=lambda m: sum(moves_data[m])/len(moves_data[m]))
+        best_move = chess.Move.from_uci(best_uci)
+        best_score = sum(moves_data[best_uci])/len(moves_data[best_uci])
+        best_score += random.uniform(-0.1, 0.1)
+        return best_score, best_move
+
+    if depth == 0 or board.is_game_over():
         return evaluate_board(board), None
-    
+
     moves = list(board.legal_moves)
-    # Tri rapide : captures prioritaires pour alpha-beta
     moves.sort(key=lambda m: 0 if board.is_capture(m) else 1)
 
     best_move = None
@@ -138,30 +126,32 @@ def minimax(board, depth, alpha, beta, maximizing):
         max_eval = -10**9
         for move in moves:
             board.push(move)
-            eval_score,_ = minimax(board, depth-1, alpha, beta, False)
+            eval_score, _ = minimax(board, depth-1, alpha, beta, False, ignore_memory)
             board.pop()
             if eval_score > max_eval:
                 max_eval = eval_score
                 best_move = move
             alpha = max(alpha, eval_score)
-            if beta <= alpha: break
+            if alpha >= beta:
+                break
         if best_move:
             update_memory(fen, best_move, max_eval)
-        return max_eval,best_move
+        return max_eval, best_move
     else:
         min_eval = 10**9
         for move in moves:
             board.push(move)
-            eval_score,_ = minimax(board, depth-1, alpha, beta, True)
+            eval_score, _ = minimax(board, depth-1, alpha, beta, True, ignore_memory)
             board.pop()
             if eval_score < min_eval:
                 min_eval = eval_score
                 best_move = move
             beta = min(beta, eval_score)
-            if beta <= alpha: break
+            if alpha >= beta:
+                break
         if best_move:
             update_memory(fen, best_move, min_eval)
-        return min_eval,best_move
+        return min_eval, best_move
 
 # ----------------------
 # Bot évolutif
@@ -177,15 +167,20 @@ class EvolvingBot:
         self.ply_count=0
 
     def maybe_evolve(self):
-        new_depth = min(self.max_depth,self.start_depth + self.ply_count//self.growth_rate)
+        new_depth = min(self.max_depth, self.start_depth + self.ply_count // self.growth_rate)
         if new_depth != self.depth:
             print(f"{self.name} évolue : {self.depth} -> {new_depth}")
             self.depth = new_depth
 
-    def select_move(self,board):
+    def select_move(self, board):
         self.ply_count += 1
         self.maybe_evolve()
-        score,move = minimax(board,self.depth,-10**9,10**9,self.color==chess.WHITE)
+        ignore_memory = board.fullmove_number < 5
+        score, move = minimax(board, self.depth, -10**9, 10**9, self.color==chess.WHITE, ignore_memory)
+        score += random.uniform(-0.1,0.1)
+        if random.random() < 0.2:
+            legal_moves = list(board.legal_moves)
+            return random.choice(legal_moves)
         if move is None:
             moves = list(board.legal_moves)
             return random.choice(moves) if moves else None
@@ -207,54 +202,107 @@ def draw_board_with_pieces(board):
     return img
 
 # ----------------------
-# Partie GUI
+# Partie GUI : Humain vs IA
 # ----------------------
-def play_game_gui(bot_white, bot_black, max_moves=60, delay=500):
+def play_game_gui_human_vs_ai(max_moves=60, delay=500):
     board = chess.Board()
     frames = []
     move_number = 0
 
+    human_color = random.choice([chess.WHITE, chess.BLACK])
+    ai_color = not human_color
+    bot_ai = EvolvingBot(ai_color, start_depth=3, growth_rate=5, max_depth=4, name="Alpha")
+    print("Vous jouez les", "Blancs" if human_color==chess.WHITE else "Noirs")
+
     root = tk.Tk()
-    root.title("Échiquier en direct")
+    root.title("Échiquier Humain vs IA")
     canvas = tk.Label(root)
     canvas.pack()
 
-    # Affichage initial
     img = draw_board_with_pieces(board)
     tk_img = ImageTk.PhotoImage(img)
     canvas.config(image=tk_img)
     canvas.image = tk_img
 
-    def update():
+    selected_square = None
+
+    def update_board():
         nonlocal move_number
-        if not board.is_game_over() and move_number < max_moves:
-            bot = bot_white if board.turn == chess.WHITE else bot_black
-            move = bot.select_move(board)
-            if move is not None:
-                board.push(move)
-                move_number += 1
-                print(f"{move_number:03d} {'White' if board.turn==chess.BLACK else 'Black'}: {move} (depth {bot.depth})")
-                img = draw_board_with_pieces(board)
-                tk_img = ImageTk.PhotoImage(img)
-                canvas.config(image=tk_img)
-                canvas.image = tk_img
-                frames.append(img)
-            root.after(delay, update)
+        move_number += 1
+        img = draw_board_with_pieces(board)
+        tk_img = ImageTk.PhotoImage(img)
+        canvas.config(image=tk_img)
+        canvas.image = tk_img
+        frames.append(img)
+
+    def on_click(event):
+        nonlocal selected_square
+        if board.turn != human_color:
+            return
+        file = event.x // SQUARE_SIZE
+        rank = 7 - (event.y // SQUARE_SIZE)
+        sq = chess.square(file, rank)
+        if selected_square is None:
+            piece = board.piece_at(sq)
+            if piece is None or piece.color != human_color:
+                return
+            selected_square = sq
         else:
-            save_memoire()
-            print("Partie terminée:", board.result())
-            if frames:
-                frames[0].save(GIF_FILE, save_all=True, append_images=frames[1:], duration=delay, loop=0)
-                print(f"GIF enregistré : {GIF_FILE}")
+            move = chess.Move(selected_square, sq)
+            if move in board.legal_moves:
+                board.push(move)
+                update_board()
+                selected_square = None
+                root.after(delay, ai_turn)
+            else:
+                selected_square = None
 
+    canvas.bind("<Button-1>", on_click)
 
-    root.after(1000, update)
+    def ai_turn():
+        if board.is_game_over() or move_number >= max_moves:
+            finish_game()
+            return
+        if board.turn == ai_color:
+            move = bot_ai.select_move(board)
+            if move:
+                board.push(move)
+                print(f"IA ({'Blancs' if ai_color==chess.WHITE else 'Noirs'}): {move}")
+                update_board()
+            root.after(delay, ai_turn)
+
+    def finish_game():
+        result = board.result()
+        print("Partie terminée:", result)
+        winner = None
+        if result == "1-0":
+            winner = chess.WHITE
+        elif result == "0-1":
+            winner = chess.BLACK
+
+        # Renforcer la mémoire
+        for fen, data in memoire.items():
+            for uci, scores in data["moves"].items():
+                if winner == ai_color:
+                    scores.append(1)
+                elif winner == human_color:
+                    scores.append(-1)
+                else:
+                    scores.append(0)
+        save_memoire()
+
+        if frames:
+            frames[0].save(GIF_FILE, save_all=True, append_images=frames[1:], duration=delay, loop=0)
+            print(f"GIF enregistré : {GIF_FILE}")
+
+    # Début automatique si l'IA est Blanc
+    if board.turn == ai_color:
+        root.after(0, ai_turn)
+
     root.mainloop()
 
 # ----------------------
 # Lancement
 # ----------------------
 if __name__=="__main__":
-    white_bot = EvolvingBot(chess.WHITE, start_depth=6, growth_rate=5, max_depth=10, name="Alpha")
-    black_bot = EvolvingBot(chess.BLACK, start_depth=6, growth_rate=5, max_depth=10, name="Beta")
-    play_game_gui(white_bot, black_bot, max_moves=60, delay=800)
+    play_game_gui_human_vs_ai(max_moves=200, delay=200)
