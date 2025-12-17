@@ -1,0 +1,196 @@
+import os
+import json
+import random
+import chess
+import tkinter as tk
+from PIL import Image, ImageTk
+
+# ======================
+# CONFIG
+# ======================
+SQUARE_SIZE = 60
+MEMOIRE_FILE = "memoire.json"
+
+PIECE_VALUES = {
+    chess.PAWN: 100,
+    chess.KNIGHT: 320,
+    chess.BISHOP: 330,
+    chess.ROOK: 500,
+    chess.QUEEN: 900,
+    chess.KING: 20000
+}
+
+CENTER_SQUARES = [chess.D4, chess.E4, chess.D5, chess.E5]
+
+# ======================
+# ZOBRIST
+# ======================
+def rand64():
+    return random.getrandbits(64)
+
+PIECE_SYMBOLS = ['P','N','B','R','Q','K','p','n','b','r','q','k']
+zobrist = {s: [rand64() for _ in range(64)] for s in PIECE_SYMBOLS}
+zobrist_side = rand64()
+zobrist_castle = {k: rand64() for k in "KQkq"}
+zobrist_ep = [rand64() for _ in range(8)]
+
+def compute_zobrist(board):
+    h = 0
+    for sq in chess.SQUARES:
+        p = board.piece_at(sq)
+        if p:
+            h ^= zobrist[p.symbol()][sq]
+    if board.turn == chess.BLACK:
+        h ^= zobrist_side
+    if board.has_kingside_castling_rights(chess.WHITE): h ^= zobrist_castle['K']
+    if board.has_queenside_castling_rights(chess.WHITE): h ^= zobrist_castle['Q']
+    if board.has_kingside_castling_rights(chess.BLACK): h ^= zobrist_castle['k']
+    if board.has_queenside_castling_rights(chess.BLACK): h ^= zobrist_castle['q']
+    if board.ep_square is not None:
+        h ^= zobrist_ep[chess.square_file(board.ep_square)]
+    return h
+
+# ======================
+# MÉMOIRE PERSISTANTE
+# ======================
+if os.path.exists(MEMOIRE_FILE):
+    try:
+        with open(MEMOIRE_FILE, "r") as f:
+            memoire = json.load(f)
+    except:
+        memoire = {}
+else:
+    memoire = {}
+
+def save_memoire():
+    with open(MEMOIRE_FILE, "w") as f:
+        json.dump(memoire, f, indent=2)
+
+def update_memory(hash_value, move, score, depth):
+    key = str(hash_value)
+    uci = move.uci()
+
+    if key not in memoire:
+        memoire[key] = {"moves": {}}
+
+    moves = memoire[key]["moves"]
+
+    if uci not in moves or depth > moves[uci]["depth"]:
+        moves[uci] = {
+            "score": score,
+            "depth": depth
+        }
+        save_memoire()
+
+# ======================
+# ÉVALUATION
+# ======================
+def evaluate(board):
+    if board.is_checkmate():
+        return -999999 if board.turn else 999999
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0
+
+    score = 0
+    for sq in chess.SQUARES:
+        p = board.piece_at(sq)
+        if p:
+            sign = 1 if p.color == chess.WHITE else -1
+            score += PIECE_VALUES[p.piece_type] * sign
+            if sq in CENTER_SQUARES:
+                score += 15 * sign
+    return score
+
+# ======================
+# MINIMAX + ALPHA BETA + MÉMOIRE
+# ======================
+def minimax(board, depth, alpha, beta, maximizing):
+    zob = compute_zobrist(board)
+    key = str(zob)
+
+    if key in memoire:
+        for uci, data in memoire[key]["moves"].items():
+            if data["depth"] >= depth:
+                return data["score"], chess.Move.from_uci(uci)
+
+    if depth == 0 or board.is_game_over():
+        return evaluate(board), None
+
+    best_move = None
+
+    if maximizing:
+        value = -10**9
+        for move in board.legal_moves:
+            board.push(move)
+            score, _ = minimax(board, depth-1, alpha, beta, False)
+            board.pop()
+            if score > value:
+                value = score
+                best_move = move
+            alpha = max(alpha, score)
+            if alpha >= beta:
+                break
+        if best_move:
+            update_memory(zob, best_move, value, depth)
+        return value, best_move
+
+    else:
+        value = 10**9
+        for move in board.legal_moves:
+            board.push(move)
+            score, _ = minimax(board, depth-1, alpha, beta, True)
+            board.pop()
+            if score < value:
+                value = score
+                best_move = move
+            beta = min(beta, score)
+            if alpha >= beta:
+                break
+        if best_move:
+            update_memory(zob, best_move, value, depth)
+        return value, best_move
+
+# ======================
+# BOT
+# ======================
+class AI:
+    def __init__(self, color, depth=4):
+        self.color = color
+        self.depth = depth
+
+    def play(self, board):
+        _, move = minimax(
+            board,
+            self.depth,
+            -10**9,
+            10**9,
+            board.turn == chess.WHITE
+        )
+        return move
+
+# ======================
+# JEU CONSOLE SIMPLE
+# ======================
+def play_console():
+    board = chess.Board()
+    ai = AI(chess.BLACK, depth=4)
+
+    while not board.is_game_over():
+        print(board)
+        if board.turn == chess.WHITE:
+            move = input("Votre coup (uci) : ")
+            board.push_uci(move)
+        else:
+            move = ai.play(board)
+            print("IA joue :", move)
+            board.push(move)
+
+    print("Résultat :", board.result())
+    save_memoire()
+
+# ======================
+# MAIN
+# ======================
+if __name__ == "__main__":
+    print("Mémoire :", os.path.abspath(MEMOIRE_FILE))
+    play_console()
