@@ -2,13 +2,11 @@ import os
 import json
 import random
 import chess
-import tkinter as tk
-from PIL import Image, ImageTk
 
 # ======================
 # CONFIG
 # ======================
-SQUARE_SIZE = 60
+SEARCH_DEPTH = 4
 MEMOIRE_FILE = "memoire.json"
 
 PIECE_VALUES = {
@@ -20,38 +18,44 @@ PIECE_VALUES = {
     chess.KING: 20000
 }
 
-CENTER_SQUARES = [chess.D4, chess.E4, chess.D5, chess.E5]
+CENTER_SQUARES = {chess.D4, chess.E4, chess.D5, chess.E5}
 
 # ======================
-# ZOBRIST
+# ZOBRIST (STABLE)
 # ======================
+random.seed(2024)
+
 def rand64():
     return random.getrandbits(64)
 
 PIECE_SYMBOLS = ['P','N','B','R','Q','K','p','n','b','r','q','k']
-zobrist = {s: [rand64() for _ in range(64)] for s in PIECE_SYMBOLS}
-zobrist_side = rand64()
-zobrist_castle = {k: rand64() for k in "KQkq"}
-zobrist_ep = [rand64() for _ in range(8)]
+Z_PIECE = {s: [rand64() for _ in range(64)] for s in PIECE_SYMBOLS}
+Z_SIDE = rand64()
+Z_CASTLE = {k: rand64() for k in "KQkq"}
+Z_EP = [rand64() for _ in range(8)]
 
 def compute_zobrist(board):
     h = 0
     for sq in chess.SQUARES:
         p = board.piece_at(sq)
         if p:
-            h ^= zobrist[p.symbol()][sq]
+            h ^= Z_PIECE[p.symbol()][sq]
+
     if board.turn == chess.BLACK:
-        h ^= zobrist_side
-    if board.has_kingside_castling_rights(chess.WHITE): h ^= zobrist_castle['K']
-    if board.has_queenside_castling_rights(chess.WHITE): h ^= zobrist_castle['Q']
-    if board.has_kingside_castling_rights(chess.BLACK): h ^= zobrist_castle['k']
-    if board.has_queenside_castling_rights(chess.BLACK): h ^= zobrist_castle['q']
+        h ^= Z_SIDE
+
+    if board.has_kingside_castling_rights(chess.WHITE): h ^= Z_CASTLE['K']
+    if board.has_queenside_castling_rights(chess.WHITE): h ^= Z_CASTLE['Q']
+    if board.has_kingside_castling_rights(chess.BLACK): h ^= Z_CASTLE['k']
+    if board.has_queenside_castling_rights(chess.BLACK): h ^= Z_CASTLE['q']
+
     if board.ep_square is not None:
-        h ^= zobrist_ep[chess.square_file(board.ep_square)]
+        h ^= Z_EP[chess.square_file(board.ep_square)]
+
     return h
 
 # ======================
-# MÉMOIRE PERSISTANTE
+# MÉMOIRE PERSISTANTE (PV UNIQUEMENT)
 # ======================
 if os.path.exists(MEMOIRE_FILE):
     try:
@@ -66,28 +70,12 @@ def save_memoire():
     with open(MEMOIRE_FILE, "w") as f:
         json.dump(memoire, f, indent=2)
 
-def update_memory(hash_value, move, score, depth):
-    key = str(hash_value)
-    uci = move.uci()
-
-    if key not in memoire:
-        memoire[key] = {"moves": {}}
-
-    moves = memoire[key]["moves"]
-
-    if uci not in moves or depth > moves[uci]["depth"]:
-        moves[uci] = {
-            "score": score,
-            "depth": depth
-        }
-        save_memoire()
-
 # ======================
 # ÉVALUATION
 # ======================
 def evaluate(board):
     if board.is_checkmate():
-        return -999999 if board.turn else 999999
+        return -999999 if board.turn == chess.WHITE else 999999
     if board.is_stalemate() or board.is_insufficient_material():
         return 0
 
@@ -102,16 +90,32 @@ def evaluate(board):
     return score
 
 # ======================
-# MINIMAX + ALPHA BETA + MÉMOIRE
+# TRANSPOSITION TABLE (RAM)
+# ======================
+TT = {}
+
+def tt_lookup(zob, depth):
+    entry = TT.get(zob)
+    if entry and entry["depth"] >= depth:
+        return entry
+    return None
+
+def tt_store(zob, depth, score, move):
+    TT[zob] = {
+        "depth": depth,
+        "score": score,
+        "move": move
+    }
+
+# ======================
+# MINIMAX + ALPHA-BETA
 # ======================
 def minimax(board, depth, alpha, beta, maximizing):
     zob = compute_zobrist(board)
-    key = str(zob)
 
-    if key in memoire:
-        for uci, data in memoire[key]["moves"].items():
-            if data["depth"] >= depth:
-                return data["score"], chess.Move.from_uci(uci)
+    entry = tt_lookup(zob, depth)
+    if entry:
+        return entry["score"], entry["move"]
 
     if depth == 0 or board.is_game_over():
         return evaluate(board), None
@@ -124,73 +128,89 @@ def minimax(board, depth, alpha, beta, maximizing):
             board.push(move)
             score, _ = minimax(board, depth-1, alpha, beta, False)
             board.pop()
+
             if score > value:
                 value = score
                 best_move = move
+
             alpha = max(alpha, score)
             if alpha >= beta:
                 break
-        if best_move:
-            update_memory(zob, best_move, value, depth)
-        return value, best_move
-
     else:
         value = 10**9
         for move in board.legal_moves:
             board.push(move)
             score, _ = minimax(board, depth-1, alpha, beta, True)
             board.pop()
+
             if score < value:
                 value = score
                 best_move = move
+
             beta = min(beta, score)
             if alpha >= beta:
                 break
-        if best_move:
-            update_memory(zob, best_move, value, depth)
-        return value, best_move
+
+    tt_store(zob, depth, value, best_move)
+    return value, best_move
 
 # ======================
-# BOT
+# IA
 # ======================
 class AI:
-    def __init__(self, color, depth=4):
+    def __init__(self, color, depth=SEARCH_DEPTH):
         self.color = color
         self.depth = depth
 
     def play(self, board):
-        _, move = minimax(
+        TT.clear()  # reset par coup
+        score, move = minimax(
             board,
             self.depth,
             -10**9,
             10**9,
-            board.turn == chess.WHITE
+            self.color == chess.WHITE
         )
+
+        if move:
+            zob = str(compute_zobrist(board))
+            memoire[zob] = {
+                "best_move": move.uci(),
+                "score": score
+            }
+            save_memoire()
+
         return move
 
 # ======================
-# JEU CONSOLE SIMPLE
+# JEU CONSOLE
 # ======================
 def play_console():
     board = chess.Board()
-    ai = AI(chess.BLACK, depth=4)
+    ai = AI(chess.BLACK)
 
     while not board.is_game_over():
-        print(board)
+        print("\n", board)
+
         if board.turn == chess.WHITE:
-            move = input("Votre coup (uci) : ")
-            board.push_uci(move)
+            uci = input("Votre coup (uci) : ").strip()
+            try:
+                board.push_uci(uci)
+            except:
+                print("Coup invalide.")
         else:
             move = ai.play(board)
-            print("IA joue :", move)
+            if not isinstance(move, chess.Move):
+                print("IA bloquée.")
+                break
+
+            print("IA joue :", move.uci())
             board.push(move)
 
-    print("Résultat :", board.result())
-    save_memoire()
+    print("\nRésultat :", board.result())
 
 # ======================
 # MAIN
 # ======================
 if __name__ == "__main__":
-    print("Mémoire :", os.path.abspath(MEMOIRE_FILE))
     play_console()
