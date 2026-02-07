@@ -1,4 +1,4 @@
-
+import chess
 
 VALEURS_PIECES = {
     'p': 100,
@@ -6,11 +6,11 @@ VALEURS_PIECES = {
     'b': 330,
     'r': 500,
     'q': 900,
-    'k': float ('inf'),
+    'k': 20000
 }
 
-VALEURS_POITIONS_BLANCHES = {
-    'p': [
+VALEURS_POSITIONS_BLANCHES = {
+    'P': [
         0, 0, 0, 0, 0, 0, 0, 0,
         50, 50, 50, 50, 50, 50, 50, 50,
         10, 10, 20, 30, 30, 20, 10, 10,
@@ -21,7 +21,7 @@ VALEURS_POITIONS_BLANCHES = {
         -50 ,-50,-50,-50,-50,-50,-50,-50
     ],
 
-    'n': [
+    'N': [
         -50,-40,-30,-30,-30,-30,-40,-50,
         -40,-20,0,0,0,0,-20,-40,    
         -30,0,10,15,15,10,0,-30,
@@ -32,7 +32,7 @@ VALEURS_POITIONS_BLANCHES = {
         -50,-40,-30,-30,-30,-30,-40,-50
     ],
 
-    'b': [
+    'B': [
         -20, -10, -10, -10, -10, -10, -10, -20,
         -10, 0, 0, 0, 0, 0, 0, -10,
         -10, 0, 5, 10, 10, 5, 0, -10,
@@ -42,8 +42,8 @@ VALEURS_POITIONS_BLANCHES = {
         -10, 5, 0, 0, 0, 0, 5, -10,
         -20, -10, -10, -10, -10, -10, -10, -20
     ],
-    
-    'r': [
+
+    'R': [
         5, 7.5, 10, 10, 10, 10, 7.5, 5,
         -20, 5, 5, 5, 5, 5, 5, -20,
         -50, 0, 0, 0, 0, 0, 0, -50,
@@ -54,7 +54,7 @@ VALEURS_POITIONS_BLANCHES = {
         -20 ,-20,-10 ,-5 ,-5 ,-10 ,-10 ,-20
     ],
 
-    'q': [
+    'Q': [
         -20, -10, -10, -5, -5, -10, -10, -20,
         -10, 0, 0, 0, 0, 0, 0, -10,
         -10, 0, 5, 5, 5, 5, 0, -10,
@@ -65,7 +65,7 @@ VALEURS_POITIONS_BLANCHES = {
         -20 ,-10 ,-10 ,-5 ,-5 ,-10 ,-10 ,-20
     ],
 
-    'k': [
+    'K': [
         -30, -40, -40, -50, -50, -40, -40, -30,
         -30, -40, -40, -50, -50, -40, -40, -30,
         -30, -40, -40, -50, -50, -40, -40, -30,
@@ -80,17 +80,100 @@ VALEURS_POITIONS_BLANCHES = {
 #SURTOUT POUR L'EARLY GAME, IL FAUDRA UTILISER UN COEFFCIENT QUI SE REDUIT AU FUR ET A MESURE
 
 VALEURS_POSITIONS_NOIR = {
-    'P': VALEURS_POITIONS_BLANCHES['p'][::-1],
-    'N': VALEURS_POITIONS_BLANCHES['n'][::-1],
-    'B': VALEURS_POITIONS_BLANCHES['b'][::-1],
-    'R': VALEURS_POITIONS_BLANCHES['r'][::-1],
-    'Q': VALEURS_POITIONS_BLANCHES['q'][::-1],
-    'K': VALEURS_POITIONS_BLANCHES['k'][::-1]
+    'p': VALEURS_POSITIONS_BLANCHES['P'][::-1],
+    'n': VALEURS_POSITIONS_BLANCHES['N'][::-1],
+    'b': VALEURS_POSITIONS_BLANCHES['B'][::-1],
+    'r': VALEURS_POSITIONS_BLANCHES['R'][::-1],
+    'q': VALEURS_POSITIONS_BLANCHES['Q'][::-1],
+    'k': VALEURS_POSITIONS_BLANCHES['K'][::-1]
 }
 
-def mini_max ():
-    pass
+def evaluation (board):
+    """
+    Évalue la position du plateau et retourne un score.
+    Un score positif indique un avantage pour les blancs, tandis qu'un score négatif indique un avantage pour les noirs.
+    L'évaluation prend en compte la valeur des pièces et leur position sur le plateau.
+    On va utiliser cette évaluation avec l'algorithme mini-max pour que notre IA puisse choisir le meilleur coup à jouer.
+    """
+    score = 0
 
-def alpha_beta ():
-    pass
+    if board.is_checkmate():   
+        return -float('inf') if board.turn else float('inf')
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0
+        
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if piece is not None:
+            piece_value = VALEURS_PIECES[piece.symbol().lower()]
+            if piece.color == chess.WHITE:
+                score += piece_value + VALEURS_POSITIONS_BLANCHES[piece.symbol()][square]
+            else:
+                score -= piece_value + VALEURS_POSITIONS_NOIR[piece.symbol()][square]
+    return score
 
+def mini_max (board, profondeur, player, maximizing: bool):
+    """
+    Ce truc ne ne sert à rien mais nous aidera pour construire l'algorithme alpha-beta
+    """
+
+    if profondeur == 0:
+        return evaluation (board)
+    else:
+        best_score = -float('inf') if maximizing else float('inf')
+        best_move = None
+        for move in board.legal_moves():
+            board.push(move)
+            score = mini_max(board, profondeur - 1)
+            board.pop()
+            if maximizing:
+                best_score = max(best_score, score)
+                best_move = move
+            else:
+                best_score = min(best_score, score)
+                best_move = move
+        return best_score, best_move
+
+def alpha_beta (board, profondeur:int , alpha: float = -float('inf'), beta: float = float('inf'), maximizing: bool = True) -> float:
+    """
+    Ordre:
+    - Regarde la mémoire pour voir si la position a déjà été évaluée
+        - Si oui, retourne l'évaluation
+    - Si non, évalue la position (avec mini_max)
+    """
+
+    if profondeur == 0 or board.is_game_over():
+        return evaluation (board)
+    
+    if maximizing: 
+        score = -float('inf')
+        for move in board.legal_moves:
+            board.push(move)
+            score, best_move = alpha_beta(board, profondeur - 1, alpha, beta, False)
+            board.pop()
+            alpha = max(alpha, score)
+
+            if alpha == score: #si c'est égal, on peut aussi stocker le move pour faire du move ordering
+                best_move = move
+            
+            if alpha >= beta: #il gagne, pas besoin de continuer à chercher
+                break
+
+    else:
+        score = float('inf')
+        for move in board.legal_moves:
+            board.push(move)
+            score, best_move = alpha_beta(board, profondeur - 1, alpha, beta, True)
+            board.pop()
+            beta = min(beta, score)
+            
+            if beta == score: #si c'est égal, on peut aussi stocker le move pour faire du move ordering
+                best_move = move
+            
+            if alpha >= beta: 
+                break
+        
+    return score, best_move
+
+if __name__ == "__main__":
+    board = chess.Board()
