@@ -189,7 +189,7 @@ def alpha_beta (TT, board, profondeur:int , alpha: float = -float('inf'), beta: 
     moves = list(board.legal_moves)
     moves.sort(key=lambda move: board.is_capture(move), reverse=maximizing) #regarde d'abord les captures, trouvant peut etre des moves plus interessants comme le mat ou la prise d'une piece importante
     
-    print ('Profondeur :', profondeur, 'Nombre de coups possibles :', len(moves), 'Alpha :', alpha, 'Beta :', beta)
+    #print ('Profondeur :', profondeur, 'Nombre de coups possibles :', len(moves), 'Alpha :', alpha, 'Beta :', beta)
 
     if cle in TT:
         if TT[cle]['move'] in moves and TT[cle]['profondeur'] >= profondeur: #si le move stocke est dans la table et que le move est possible (car on peux avoir plusieurs positions qui ont la meme cle) alors on retourne l'evaluation stockee
@@ -241,7 +241,7 @@ def alpha_beta (TT, board, profondeur:int , alpha: float = -float('inf'), beta: 
     else:
         flag = EXACT
 
-    print ('Mis à jour dans la TT : Profondeur :', profondeur, 'Meilleur coup :', best_move, 'Meilleur score :', best_score, 'Flag :', flag)
+    #print ('Mis à jour dans la TT : Profondeur :', profondeur, 'Meilleur coup :', best_move, 'Meilleur score :', best_score, 'Flag :', flag)
     update_TT(TT, cle, best_score, best_move, profondeur, flag) #on stocke dans la memoire vive (TT)
     return best_score, best_move
 
@@ -261,7 +261,11 @@ UPPERBOUND = 2
 if __name__ == "__main__":
     board = chess.Board()
     Z = creer_TT(board)
-    move = ia_move(Z, board, profondeur=3)
-    print("IA joue :", move)
-    board.push(move)
-    print(board)
+    for i in range(50):
+        move = ia_move(Z, board, profondeur=3)
+        print("IA joue :", move, "Round :" , i+1, board.turn == chess.WHITE),
+        print ("Evaluation de la position :", evaluation(board))
+        board.push(move)
+        print(board)
+
+
