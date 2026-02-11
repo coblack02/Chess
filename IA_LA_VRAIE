@@ -1,4 +1,29 @@
 import chess
+import chess.polyglot
+
+def mini_max (board, profondeur, maximizing: bool):
+    """
+    Ce truc ne ne sert à rien mais nous aidera pour construire l'algorithme alpha-beta
+    """
+
+    if profondeur == 0:
+        return evaluation (board)
+    else:
+        best_score = -float('inf') if maximizing else float('inf')
+        best_move = None
+        for move in board.legal_moves():
+            board.push(move)
+            score = mini_max(board, profondeur - 1)
+            board.pop()
+            if maximizing:
+                best_score = max(best_score, score)
+                best_move = move
+            else:
+                best_score = min(best_score, score)
+                best_move = move
+        return best_score, best_move
+
+#on fera une fonction qui va utiliser des coefficients puis l'ia les modifiera pour les optimiser
 
 VALEURS_PIECES = {
     'p': 100,
@@ -88,6 +113,47 @@ VALEURS_POSITIONS_NOIR = {
     'k': VALEURS_POSITIONS_BLANCHES['K'][::-1]
 }
 
+def creer_TT(board):
+    """
+    Cree une table de transposition pour stocker les positions deja evaluees et eviter de les reevaluer
+    La table de transposition est un dictionnaire où les clés sont des positions de plateau de nombre en 64 bits (Zobrist hashing) et les valeurs sont les évaluations correspondantes.
+    Cette derniere sert surtout de memoire vive
+    """
+    return {}
+
+def update_TT(TT: dict, cle: int, evaluation, move = None, profondeur = None, flag = None):
+    """
+    Met à jour l'évaluation d'une position de plateau dans la table de transposition
+    Si la position est déjà dans la table, on ne met à jour que si l'évaluation est meilleure.
+    En effet la cle peut parfois etre la meme on garde alors la plus grande profondeur
+    Parametres:
+    - TT: la table de transposition
+    - cle: la clé de la position à mettre à jour    
+    - evaluation: le score de la position
+    - move: le meilleur coup pour cette position
+    - profondeur: la profondeur à laquelle l'évaluation a été faite
+    - flag: le type d'évaluation (exact(0), lower bound(1), upper bound(2))
+    """
+
+    if cle not in TT or TT[cle]['profondeur'] < profondeur: #si la position n'est pas dans la table ou si la profondeur de l'evaluation est plus grande que celle stockee alors on met a jour
+        TT[cle] = {'score': evaluation, 'profondeur': profondeur, 'move': move, 'flag': flag} #a jouter les lower bound et upper bound pour faire du alpha-beta avec table de transposition
+
+def recuperer_cle_TT(board):
+    """
+    Récupère l'évaluation d'une position de plateau à partir de la table de transposition.
+    """     
+    return chess.polyglot.zobrist_hash(board)
+
+def update_cle(board):
+    """
+    Met à jour la clé de la table de transposition en fonction du coup joue
+    On utilise le Zobrist hashing pour mettre à jour la clé en fonction du coup joué
+    C'est BEAUCOUP plus rapide que de recalculer la clé à partir de la position du plateau à chaque fois
+    """
+
+    #pour l'instant c'est pas le bon truc
+    return chess.polyglot.zobrist_hash(board) #on fait un XOR entre la clé actuelle et le hash du coup joué pour obtenir la nouvelle clé de la position après le coup joué
+
 def evaluation (board):
     """
     Évalue la position du plateau et retourne un score.
@@ -112,29 +178,7 @@ def evaluation (board):
                 score -= piece_value + VALEURS_POSITIONS_NOIR[piece.symbol()][square]
     return score
 
-def mini_max (board, profondeur, player, maximizing: bool):
-    """
-    Ce truc ne ne sert à rien mais nous aidera pour construire l'algorithme alpha-beta
-    """
-
-    if profondeur == 0:
-        return evaluation (board)
-    else:
-        best_score = -float('inf') if maximizing else float('inf')
-        best_move = None
-        for move in board.legal_moves():
-            board.push(move)
-            score = mini_max(board, profondeur - 1)
-            board.pop()
-            if maximizing:
-                best_score = max(best_score, score)
-                best_move = move
-            else:
-                best_score = min(best_score, score)
-                best_move = move
-        return best_score, best_move
-
-def alpha_beta (board, profondeur:int , alpha: float = -float('inf'), beta: float = float('inf'), maximizing: bool = True) -> float:
+def alpha_beta (TT, board, profondeur:int , alpha: float = -float('inf'), beta: float = float('inf'), maximizing: bool = True, cle=None) -> tuple:
     """
     Ordre:
     - Regarde la mémoire pour voir si la position a déjà été évaluée
@@ -142,38 +186,82 @@ def alpha_beta (board, profondeur:int , alpha: float = -float('inf'), beta: floa
     - Si non, évalue la position (avec mini_max)
     """
 
-    if profondeur == 0 or board.is_game_over():
-        return evaluation (board)
+    moves = list(board.legal_moves)
+    moves.sort(key=lambda move: board.is_capture(move), reverse=maximizing) #regarde d'abord les captures, trouvant peut etre des moves plus interessants comme le mat ou la prise d'une piece importante
     
-    if maximizing: 
-        score = -float('inf')
-        for move in board.legal_moves:
-            board.push(move)
-            score, best_move = alpha_beta(board, profondeur - 1, alpha, beta, False)
-            board.pop()
-            alpha = max(alpha, score)
+    print ('Profondeur :', profondeur, 'Nombre de coups possibles :', len(moves), 'Alpha :', alpha, 'Beta :', beta)
 
-            if alpha == score: #si c'est égal, on peut aussi stocker le move pour faire du move ordering
+    if cle in TT:
+        if TT[cle]['move'] in moves and TT[cle]['profondeur'] >= profondeur: #si le move stocke est dans la table et que le move est possible (car on peux avoir plusieurs positions qui ont la meme cle) alors on retourne l'evaluation stockee
+            return TT[cle]['score'], TT[cle]['move']
+        
+    if profondeur == 0 or board.is_game_over():
+        return evaluation (board), None
+    
+    if maximizing: #si coup joueur blanc
+        best_score = -float('inf')
+        best_move = None
+        for move in moves:
+            board.push(move)
+            nouvelle_cle = update_cle(board)
+            score, _ = alpha_beta(TT, board, profondeur - 1, alpha, beta, board.turn == chess.WHITE, nouvelle_cle) 
+            board.pop() #retourne en arriere pour tester le coup suivant
+
+            if score > best_score:
+                best_score = score
                 best_move = move
-            
+
+            alpha = max(alpha, best_score)
+
             if alpha >= beta: #il gagne, pas besoin de continuer à chercher
                 break
 
-    else:
-        score = float('inf')
-        for move in board.legal_moves:
+    else: #si coup joueur noir
+        best_score = float('inf')
+        best_move = None
+        for move in moves:
             board.push(move)
-            score, best_move = alpha_beta(board, profondeur - 1, alpha, beta, True)
+            nouvelle_cle = update_cle(board)
+            score, _ = alpha_beta(TT, board, profondeur - 1, alpha, beta, board.turn == chess.WHITE, nouvelle_cle) 
             board.pop()
-            beta = min(beta, score)
             
-            if beta == score: #si c'est égal, on peut aussi stocker le move pour faire du move ordering
+            if score < best_score:
+                best_score = score
                 best_move = move
             
+            beta = min(beta, best_score)
+
             if alpha >= beta: 
                 break
-        
-    return score, best_move
+
+    if best_score <= alpha:
+        flag = UPPERBOUND
+    elif best_score >= beta:
+        flag = LOWERBOUND
+    else:
+        flag = EXACT
+
+    print ('Mis à jour dans la TT : Profondeur :', profondeur, 'Meilleur coup :', best_move, 'Meilleur score :', best_score, 'Flag :', flag)
+    update_TT(TT, cle, best_score, best_move, profondeur, flag) #on stocke dans la memoire vive (TT)
+    return best_score, best_move
+
+def ia_move(TT, board, profondeur):
+    """
+    Fonction qui retourne le meilleur coup à jouer pour l'IA en utilisant l'algorithme alpha-beta
+    """
+
+    cle = recuperer_cle_TT(board)
+    score, move = alpha_beta(TT, board, profondeur, -float('inf'), float('inf'), board.turn == chess.WHITE, cle)
+    return move
+
+EXACT = 0
+LOWERBOUND = 1
+UPPERBOUND = 2
 
 if __name__ == "__main__":
     board = chess.Board()
+    Z = creer_TT(board)
+    move = ia_move(Z, board, profondeur=3)
+    print("IA joue :", move)
+    board.push(move)
+    print(board)
