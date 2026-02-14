@@ -1,5 +1,5 @@
 import chess
-import chess.polyglot
+from zobrist import *
 
 def mini_max (board, profondeur, maximizing: bool):
     """
@@ -113,46 +113,6 @@ VALEURS_POSITIONS_NOIR = {
     'k': VALEURS_POSITIONS_BLANCHES['K'][::-1]
 }
 
-def creer_TT(board):
-    """
-    Cree une table de transposition pour stocker les positions deja evaluees et eviter de les reevaluer
-    La table de transposition est un dictionnaire où les clés sont des positions de plateau de nombre en 64 bits (Zobrist hashing) et les valeurs sont les évaluations correspondantes.
-    Cette derniere sert surtout de memoire vive
-    """
-    return {}
-
-def update_TT(TT: dict, cle: int, evaluation, move = None, profondeur = None, flag = None):
-    """
-    Met à jour l'évaluation d'une position de plateau dans la table de transposition
-    Si la position est déjà dans la table, on ne met à jour que si l'évaluation est meilleure.
-    En effet la cle peut parfois etre la meme on garde alors la plus grande profondeur
-    Parametres:
-    - TT: la table de transposition
-    - cle: la clé de la position à mettre à jour    
-    - evaluation: le score de la position
-    - move: le meilleur coup pour cette position
-    - profondeur: la profondeur à laquelle l'évaluation a été faite
-    - flag: le type d'évaluation (exact(0), lower bound(1), upper bound(2))
-    """
-
-    if cle not in TT or TT[cle]['profondeur'] < profondeur: #si la position n'est pas dans la table ou si la profondeur de l'evaluation est plus grande que celle stockee alors on met a jour
-        TT[cle] = {'score': evaluation, 'profondeur': profondeur, 'move': move, 'flag': flag} #a jouter les lower bound et upper bound pour faire du alpha-beta avec table de transposition
-
-def recuperer_cle_TT(board):
-    """
-    Récupère l'évaluation d'une position de plateau à partir de la table de transposition.
-    """     
-    return chess.polyglot.zobrist_hash(board)
-
-def update_cle(board):
-    """
-    Met à jour la clé de la table de transposition en fonction du coup joue
-    On utilise le Zobrist hashing pour mettre à jour la clé en fonction du coup joué
-    C'est BEAUCOUP plus rapide que de recalculer la clé à partir de la position du plateau à chaque fois
-    """
-
-    #pour l'instant c'est pas le bon truc
-    return chess.polyglot.zobrist_hash(board) #on fait un XOR entre la clé actuelle et le hash du coup joué pour obtenir la nouvelle clé de la position après le coup joué
 
 def evaluation (board):
     """
@@ -178,7 +138,7 @@ def evaluation (board):
                 score -= piece_value + VALEURS_POSITIONS_NOIR[piece.symbol()][square]
     return score
 
-def alpha_beta (TT, board, profondeur:int , alpha: float = -float('inf'), beta: float = float('inf'), maximizing: bool = True, cle=None) -> tuple:
+def alpha_beta (TT, board, profondeur:int , cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, alpha: float = -float('inf'), beta: float = float('inf'), maximizing: bool = True) -> tuple:
     """
     Ordre:
     - Regarde la mémoire pour voir si la position a déjà été évaluée
@@ -193,18 +153,19 @@ def alpha_beta (TT, board, profondeur:int , alpha: float = -float('inf'), beta: 
 
     if cle in TT:
         if TT[cle]['move'] in moves and TT[cle]['profondeur'] >= profondeur: #si le move stocke est dans la table et que le move est possible (car on peux avoir plusieurs positions qui ont la meme cle) alors on retourne l'evaluation stockee
-            return TT[cle]['score'], TT[cle]['move']
+            return TT[cle]['score'], TT[cle]['move'], update_cle(board, cle, TT[cle]['move'], ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES) #on met à jour la clé pour la position après le coup joué
         
     if profondeur == 0 or board.is_game_over():
-        return evaluation (board), None
+        return evaluation (board), None, cle
     
     if maximizing: #si coup joueur blanc
         best_score = -float('inf')
         best_move = None
         for move in moves:
+            
+            nouvelle_cle = update_cle(board, cle, move, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES)
             board.push(move)
-            nouvelle_cle = update_cle(board)
-            score, _ = alpha_beta(TT, board, profondeur - 1, alpha, beta, board.turn == chess.WHITE, nouvelle_cle) 
+            score, _, _ = alpha_beta(TT, board, profondeur -1 , nouvelle_cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, maximizing= board.turn == chess.WHITE ) 
             board.pop() #retourne en arriere pour tester le coup suivant
 
             if score > best_score:
@@ -220,9 +181,10 @@ def alpha_beta (TT, board, profondeur:int , alpha: float = -float('inf'), beta: 
         best_score = float('inf')
         best_move = None
         for move in moves:
+            
+            nouvelle_cle = update_cle(board, cle, move, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES)
             board.push(move)
-            nouvelle_cle = update_cle(board)
-            score, _ = alpha_beta(TT, board, profondeur - 1, alpha, beta, board.turn == chess.WHITE, nouvelle_cle) 
+            score, _, _ = alpha_beta(TT, board, profondeur -1 , nouvelle_cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, maximizing= board.turn == chess.WHITE) 
             board.pop()
             
             if score < best_score:
@@ -243,15 +205,14 @@ def alpha_beta (TT, board, profondeur:int , alpha: float = -float('inf'), beta: 
 
     #print ('Mis à jour dans la TT : Profondeur :', profondeur, 'Meilleur coup :', best_move, 'Meilleur score :', best_score, 'Flag :', flag)
     update_TT(TT, cle, best_score, best_move, profondeur, flag) #on stocke dans la memoire vive (TT)
-    return best_score, best_move
+    return best_score, best_move, nouvelle_cle
 
-def ia_move(TT, board, profondeur):
+def ia_move(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, maximizing):
     """
     Fonction qui retourne le meilleur coup à jouer pour l'IA en utilisant l'algorithme alpha-beta
     """
 
-    cle = recuperer_cle_TT(board)
-    score, move = alpha_beta(TT, board, profondeur, -float('inf'), float('inf'), board.turn == chess.WHITE, cle)
+    score, move, _ = alpha_beta(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, -float('inf'), float('inf'), board.turn == chess.WHITE)
     return move
 
 EXACT = 0
@@ -260,12 +221,17 @@ UPPERBOUND = 2
 
 if __name__ == "__main__":
     board = chess.Board()
-    Z = creer_TT(board)
-    for i in range(50):
-        move = ia_move(Z, board, profondeur=3)
+    Z = creer_TT()
+    ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES = creer_zobrist()
+    premiere_cle = recuperer_cle_TT(board, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES) #on calcule la clé de la position actuelle du plateau pour pouvoir la stocker dans la table de transposition
+    for i in range(1000):
+        move = ia_move(Z, board, profondeur=3, cle=premiere_cle, ZOBRIST_PIECES=ZOBRIST_PIECES, ZOBRIST_ROQUES=ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT=ZOBRIST_EN_PASSANT, ZOBRIST_TOUR=ZOBRIST_TOUR, INDEX_PIECES=INDEX_PIECES, maximizing=board.turn == chess.WHITE)
         print("IA joue :", move, "Round :" , i+1, board.turn == chess.WHITE),
         print ("Evaluation de la position :", evaluation(board))
         board.push(move)
         print(board)
+        if board.is_game_over(): break
+    print ("table de zobrist :", len(Z))
+    print ("Partie terminée :", board.result())
 
 
