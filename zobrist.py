@@ -1,491 +1,159 @@
 import chess
-from zobrist import *
-import tkinter as tk
-from PIL import Image, ImageTk
-import os
+import chess.polyglot 
+import random
 
-def mini_max (board, profondeur, maximizing: bool):
+def creer_zobrist():
     """
-    Ce truc ne ne sert à rien mais nous aidera pour construire l'algorithme alpha-beta
+    Crée une table de Zobrist pour le jeu d'échecs.
+    La table de Zobrist est une table de hachage utilisée pour représenter les positions de plateau de manière efficace.
+    Elle est utilisée pour éviter de réévaluer les positions déjà évaluées lors de l'exploration de l'arbre de recherche.
+    La table de Zobrist est un tableau à deux dimensions où chaque entrée correspond à une pièce et une case du plateau. 
+    Chaque entrée contient un nombre aléatoire unique qui représente la présence ou l'absence d'une pièce sur cette case.
+    """
+    ZOBRIST_PIECES = [[random.getrandbits(64) for _ in range(12)] for _ in range(64)]
+    ZOBRIST_ROQUES = [random.getrandbits(64) for _ in range(4)]
+    ZOBRIST_EN_PASSANT = [random.getrandbits(64) for _ in range(8)]
+    ZOBRIST_TOUR = random.getrandbits(64)
+    INDEX_PIECES = { 'P': 0, 'N': 1, 'B': 2, 'R': 3, 'Q': 4, 'K': 5, 'p': 6, 'n': 7, 'b': 8, 'r': 9, 'q': 10, 'k': 11 }
+
+    return ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES
+
+
+def hash_zobrist(board, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES): 
+    """
+    Calcule le hachage de Zobrist pour une position de plateau donnée.
+    Le hachage de Zobrist est calculé en effectuant un XOR entre les valeurs correspondantes dans la table de Zobrist pour chaque pièce présente sur le plateau, ainsi que pour les droits de roque, les cases d'en passant et le tour de jeu.
     """
 
-    if profondeur == 0:
-        return evaluation (board)
-    else:
-        best_score = -float('inf') if maximizing else float('inf')
-        best_move = None
-        for move in board.legal_moves():
-            board.push(move)
-            score = mini_max(board, profondeur - 1)
-            board.pop()
-            if maximizing:
-                best_score = max(best_score, score)
-                best_move = move
-            else:
-                best_score = min(best_score, score)
-                best_move = move
-        return best_score, best_move
+    hachage = 0
 
-#on fera une fonction qui va utiliser des coefficients puis l'ia les modifiera pour les optimiser
-
-VALEURS_PIECES = {
-    'p': 100,
-    'n': 320,
-    'b': 330,
-    'r': 500,
-    'q': 900,
-    'k': 20000
-}
-
-VALEURS_POSITIONS_BLANCHES = {
-    'P': [
-        0, 0, 0, 0, 0, 0, 0, 0,
-        50, 50, 50, 50, 50, 50, 50, 50,
-        10, 10, 20, 30, 30, 20, 10, 10,
-        5, 5, 10, 25, 25 , 10 , 5 , 5,
-        0, 0, 0, 5, 5, 0, 0, 0,
-        -5,-5,-15,-15,-15,-15,-5,-5,
-        -37.5,-37.5,-47.5,-75,-75,-47.5,-37.5,-37.5,
-        -50 ,-50,-50,-50,-50,-50,-50,-50
-    ],
-
-    'N': [
-        -50,-40,-30,-30,-30,-30,-40,-50,
-        -40,-20,0,0,0,0,-20,-40,    
-        -30,0,10,15,15,10,0,-30,
-        -30,5,15,20,20,15,5,-30,
-        -30,0,15,20,20,15,0,-30,
-        -30,5,10,15,15,10,5,-30,
-        -40,-20,0,5,5,0,-20,-40,
-        -50,-40,-30,-30,-30,-30,-40,-50
-    ],
-
-    'B': [
-        -20, -10, -10, -10, -10, -10, -10, -20,
-        -10, 0, 0, 0, 0, 0, 0, -10,
-        -10, 0, 5, 10, 10, 5, 0, -10,
-        -10, 5, 5, 10, 10, 5, 5, -10,
-        -10, 0, 10, 10, 10, 10, 0, -10,
-        -10, 10, 10, 10, 10, 10, 10, -10,
-        -10, 5, 0, 0, 0, 0, 5, -10,
-        -20, -10, -10, -10, -10, -10, -10, -20
-    ],
-
-    'R': [
-        5, 7.5, 10, 10, 10, 10, 7.5, 5,
-        -20, 5, 5, 5, 5, 5, 5, -20,
-        -50, 0, 0, 0, 0, 0, 0, -50,
-        -50, 0, 0, 0, 0, 0, 0, -50,
-        -50, 0, 0, 0, 0, 0, 0, -50,
-        -50 , 0 , 0 , 0 , 0 , 0 , 0 , -50,
-        -50 , -5 , -5 , -5 , -5 , -5 , -5 , -50,
-        -20 ,-20,-10 ,-5 ,-5 ,-10 ,-10 ,-20
-    ],
-
-    'Q': [
-        -20, -10, -10, -5, -5, -10, -10, -20,
-        -10, 0, 0, 0, 0, 0, 0, -10,
-        -10, 0, 5, 5, 5, 5, 0, -10,
-        -5 , 0 , 5 , 5 , 5 , 5 , 0 , -5,
-        0 , 0 , 5 , 5 , 5 , 5 , 0 , -10,
-        -10 , 5 , 5 , 5 , 5 , 5 , 0 ,-10,
-        -10 , 0 , 5 , 0 , 0 , 0 , 0 ,-10,
-        -20 ,-10 ,-10 ,-5 ,-5 ,-10 ,-10 ,-20
-    ],
-
-    'K': [
-        -30, -40, -40, -50, -50, -40, -40, -30,
-        -30, -40, -40, -50, -50, -40, -40, -30,
-        -30, -40, -40, -50, -50, -40, -40, -30,
-        -30 , 0 , 0 , 0 , 0 , 0 , 0 , -30,
-        -20 , 20 , 20 , 20 , 20 , 20 , 20 ,-20,
-        -10 ,-20 ,-20 ,-20 ,-20 ,-20 ,-20 ,-10,
-        20 , 20 , 0 , 0 , 0 , 0 , 20 , 20,
-        20 , 30 , 10 , 0 , 0 , 10 , 30 , 20
-     ]
-}
-
-#SURTOUT POUR L'EARLY GAME, IL FAUDRA UTILISER UN COEFFCIENT QUI SE REDUIT AU FUR ET A MESURE
-
-VALEURS_POSITIONS_NOIR = {
-    'p': VALEURS_POSITIONS_BLANCHES['P'][::-1],
-    'n': VALEURS_POSITIONS_BLANCHES['N'][::-1],
-    'b': VALEURS_POSITIONS_BLANCHES['B'][::-1],
-    'r': VALEURS_POSITIONS_BLANCHES['R'][::-1],
-    'q': VALEURS_POSITIONS_BLANCHES['Q'][::-1],
-    'k': VALEURS_POSITIONS_BLANCHES['K'][::-1]
-}
-
-def is_pinned(board, square):
-    """Retourne True si la pièce sur square est clouée contre le roi adverse."""
-    piece = board.piece_at(square)
-    if piece is None:
-        return False
-
-    king_square = board.king(not piece.color)
-    if king_square is None:
-        return False
-
-    rank1, file1 = chess.square_rank(square), chess.square_file(square)
-    rank2, file2 = chess.square_rank(king_square), chess.square_file(king_square)
-
-    delta_rank = rank2 - rank1
-    delta_file = file2 - file1
-
-    step_rank = 0 if delta_rank == 0 else (delta_rank // abs(delta_rank))
-    step_file = 0 if delta_file == 0 else (delta_file // abs(delta_file))
-
-    if step_rank == 0 and step_file == 0:
-        return False
-
-    r, f = rank1 + step_rank, file1 + step_file
-    blockers = 0
-    while (r, f) != (rank2, file2):
-        if not (0 <= r <= 7 and 0 <= f <= 7):
-            break  # carré hors plateau
-        sq = chess.square(f, r)
-        if board.piece_at(sq) is not None:
-            blockers += 1
-        r += step_rank
-        f += step_file
-
-    return blockers == 1
-
-def evaluation (board):
-    """
-    Évalue la position du plateau et retourne un score.
-    Un score positif indique un avantage pour les blancs, tandis qu'un score négatif indique un avantage pour les noirs.
-    L'évaluation prend en compte la valeur des pièces et leur position sur le plateau.
-    On va utiliser cette évaluation avec l'algorithme mini-max pour que notre IA puisse choisir le meilleur coup à jouer.
-    """
-    score = 0
-
-    # Fin de partie
-    if board.is_checkmate():
-        return -float('inf') if board.turn else float('inf')
-    if board.is_stalemate() or board.is_insufficient_material():
-        return 0
-
-    num_moves_played = board.fullmove_number
-    total_pieces = sum(1 for sq in chess.SQUARES if board.piece_at(sq) is not None)
-    early_game_coeff = min(1, total_pieces / 32)
-
-    # Pré-calcul mobilité
-    mobility = {sq:0 for sq in chess.SQUARES}
-    for move in board.legal_moves:
-        mobility[move.from_square] += 1
-
-    # Pré-calcul attaquants
-    attackers_white = {sq: board.attackers(chess.WHITE, sq) for sq in chess.SQUARES}
-    attackers_black = {sq: board.attackers(chess.BLACK, sq) for sq in chess.SQUARES}
-
-    # Cases centrales
-    CENTER = [chess.D4, chess.E4, chess.D5, chess.E5]
-
-    # Boucle principale sur toutes les pièces
     for square in chess.SQUARES:
         piece = board.piece_at(square)
-        if piece is None:
-            continue
+        if piece is not None:
+            piece_index = INDEX_PIECES[piece.symbol()]
+            hachage ^= ZOBRIST_PIECES[square][piece_index]
 
-        symbol = piece.symbol()
-        value = VALEURS_PIECES[symbol.lower()]
-        table_value = (VALEURS_POSITIONS_BLANCHES[symbol][square] if piece.color == chess.WHITE
-                       else VALEURS_POSITIONS_NOIR[symbol.lower()][square])
-        table_value *= early_game_coeff
+    # droits de roque
+    if board.has_kingside_castling_rights(chess.WHITE):
+        hachage ^= ZOBRIST_ROQUES[0]
+    if board.has_queenside_castling_rights(chess.WHITE):
+        hachage ^= ZOBRIST_ROQUES[1]
+    if board.has_kingside_castling_rights(chess.BLACK):
+        hachage ^= ZOBRIST_ROQUES[2]
+    if board.has_queenside_castling_rights(chess.BLACK):
+        hachage ^= ZOBRIST_ROQUES[3]
 
-        piece_score = value + table_value
+    # cases d'en passant
+    if board.ep_square is not None:
+        file = chess.square_file(board.ep_square)
+        hachage ^= ZOBRIST_EN_PASSANT[file]
 
-        # Mobilité pondérée
-        piece_score += mobility[square] * (1 if symbol.lower() in ['p','n','b'] else 3)
+    # tour de jeu
+    if board.turn == chess.BLACK:
+        hachage ^= ZOBRIST_TOUR
 
-        # Protégé / attaqué
-        defenders = attackers_white[square] if piece.color == chess.WHITE else attackers_black[square]
-        attackers_set = attackers_black[square] if piece.color == chess.WHITE else attackers_white[square]
-        if defenders:
-            piece_score *= 1.1
-        if attackers_set:
-            piece_score *= 0.9
+    return hachage
 
-        # Développement début de partie
-        if num_moves_played <= 12:
-            if piece.color == chess.WHITE:
-                if symbol in ['N','B','R','Q'] and square in [chess.B1,chess.G1,chess.C1,chess.F1,chess.D1,chess.E1,chess.A1,chess.H1]:
-                    piece_score += 30
-                elif symbol == 'P' and square in [chess.C2,chess.D2,chess.E2,chess.F2]:
-                    piece_score += 20
-            else:
-                if symbol in ['n','b','r','q'] and square in [chess.B8,chess.G8,chess.C8,chess.F8,chess.D8,chess.E8,chess.A8,chess.H8]:
-                    piece_score += 30
-                elif symbol == 'p' and square in [chess.C7,chess.D7,chess.E7,chess.F7]:
-                    piece_score += 20
+def creer_TT():
+    """
+    Cree une table de transposition pour stocker les positions deja evaluees et eviter de les reevaluer
+    La table de transposition est un dictionnaire où les clés sont des positions de plateau de nombre en 64 bits (Zobrist hashing) et les valeurs sont les évaluations correspondantes.
+    Cette derniere sert surtout de memoire vive
+    """
+    return {}
 
-        # Contrôle du centre
-        if square in CENTER:
-            piece_score += 10 if piece.color == chess.WHITE else -10
+def update_TT(TT: dict, cle: int, evaluation, move = None, profondeur = None, flag = None):
+    """
+    Met à jour l'évaluation d'une position de plateau dans la table de transposition
+    Si la position est déjà dans la table, on ne met à jour que si l'évaluation est meilleure.
+    En effet la cle peut parfois etre la meme on garde alors la plus grande profondeur
+    Parametres:
+    - TT: la table de transposition
+    - cle: la clé de la position à mettre à jour    
+    - evaluation: le score de la position
+    - move: le meilleur coup pour cette position
+    - profondeur: la profondeur à laquelle l'évaluation a été faite
+    - flag: le type d'évaluation (exact(0), lower bound(1), upper bound(2))
+    """
 
-        # Avancement des pions centraux
-        if symbol.lower() == 'p':
-            rank = chess.square_rank(square)
-            if piece.color == chess.WHITE and rank >= 3:
-                piece_score += 5
-            elif piece.color == chess.BLACK and rank <= 4:
-                piece_score += 5
+    if cle not in TT or TT[cle]['profondeur'] < profondeur: #si la position n'est pas dans la table ou si la profondeur de l'evaluation est plus grande que celle stockee alors on met a jour
+        TT[cle] = {'score': evaluation, 'profondeur': profondeur, 'move': move, 'flag': flag} #a jouter les lower bound et upper bound pour faire du alpha-beta avec table de transposition
 
-        # Pins
-        if is_pinned(board, square):
-            piece_score += 20 if piece.color == chess.WHITE else -20
+def recuperer_cle_TT(board, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES):
+    """
+    Récupère l'évaluation d'une position de plateau à partir de la table de transposition.
+    """     
+    return hash_zobrist(board, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES)
 
-        score += piece_score if piece.color == chess.WHITE else -piece_score
+def update_cle(board, cle, move, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT,  ZOBRIST_TOUR, INDEX_PIECES):
+    """
+    Met à jour la clé de la table de transposition en fonction du coup joue
+    On utilise le Zobrist hashing pour mettre à jour la clé en fonction du coup joué
+    C'est BEAUCOUP plus rapide que de recalculer la clé à partir de la position du plateau à chaque fois
+    """
 
-    # Pions doublés / passés
-    for file in range(8):
-        pawns_white = [sq for sq in chess.SQUARES if board.piece_at(sq) and board.piece_at(sq).symbol() == 'P' and chess.square_file(sq) == file]
-        pawns_black = [sq for sq in chess.SQUARES if board.piece_at(sq) and board.piece_at(sq).symbol() == 'p' and chess.square_file(sq) == file]
+    piece = board.piece_at(move.from_square)
+    piece_index = INDEX_PIECES[piece.symbol()]
 
-        # Doublés
-        if len(pawns_white) > 1:
-            score -= 10 * (len(pawns_white)-1)
-        if len(pawns_black) > 1:
-            score += 10 * (len(pawns_black)-1)
+    # enlever ancien en passant 
+    if board.ep_square is not None:
+        cle ^= ZOBRIST_EN_PASSANT[chess.square_file(board.ep_square)]
 
-        # Pions passés
-        for sq in pawns_white:
-            is_passed = True
-            for f in range(max(0,file-1), min(8,file+2)):
-                for r in range(chess.square_rank(sq)+1, 8):
-                    p = board.piece_at(chess.square(f,r))
-                    if p and p.color == chess.BLACK and p.symbol().lower() == 'p':
-                        is_passed = False
-            if is_passed:
-                score += 20
-        for sq in pawns_black:
-            is_passed = True
-            for f in range(max(0,file-1), min(8,file+2)):
-                for r in range(0, chess.square_rank(sq)):
-                    p = board.piece_at(chess.square(f,r))
-                    if p and p.color == chess.WHITE and p.symbol().lower() == 'p':
-                        is_passed = False
-            if is_passed:
-                score -= 20
+    #  enlever pièce de départ 
+    cle ^= ZOBRIST_PIECES[move.from_square][piece_index]
 
-    # Bonus tactiques
-    if board.turn == chess.WHITE:
-        score += 50 if board.is_check() else 0
+    # capture 
+    if board.is_capture(move):
+        if board.is_en_passant(move):
+            cap_sq = move.to_square + (-8 if piece.color == chess.WHITE else 8)
+        else:
+            cap_sq = move.to_square
+        captured = board.piece_at(cap_sq)
+        cle ^= ZOBRIST_PIECES[cap_sq][INDEX_PIECES[captured.symbol()]]
+
+    #  roque : déplacement tour et roi
+    if board.is_castling(move):
+        if move.to_square == chess.G1:
+            rook_from, rook_to = chess.H1, chess.F1
+        elif move.to_square == chess.C1:
+            rook_from, rook_to = chess.A1, chess.D1
+        elif move.to_square == chess.G8:
+            rook_from, rook_to = chess.H8, chess.F8
+        else:
+            rook_from, rook_to = chess.A8, chess.D8
+
+        rook = board.piece_at(rook_from)
+        r_idx = INDEX_PIECES[rook.symbol()]
+        cle ^= ZOBRIST_PIECES[rook_from][r_idx]
+        cle ^= ZOBRIST_PIECES[rook_to][r_idx]
+
+    #  arrivée pièce 
+    if move.promotion:
+        promo = chess.Piece(move.promotion, piece.color)
+        cle ^= ZOBRIST_PIECES[move.to_square][INDEX_PIECES[promo.symbol()]]
     else:
-        score -= 50 if board.is_check() else 0
+        cle ^= ZOBRIST_PIECES[move.to_square][piece_index]
 
-    # Fourchettes
-    for square in chess.SQUARES:
-        piece = board.piece_at(square)
-        if not piece:
-            continue
-        attacks = board.attacks(square)
-        important_targets = [t for t in attacks if board.piece_at(t) and board.piece_at(t).symbol().lower() in ['k','q','r','b','n']]
-        if len(important_targets) >= 2:
-            if piece.color == chess.WHITE:
-                score += 50
-            else:
-                score -= 50
+    #  droits de roque 
+    old = board.castling_rights
+    board.push(move)
+    new = board.castling_rights
+    board.pop()
 
-    return score
+    diff = old ^ new
+    if diff & chess.BB_H1: cle ^= ZOBRIST_ROQUES[0]
+    if diff & chess.BB_A1: cle ^= ZOBRIST_ROQUES[1]
+    if diff & chess.BB_H8: cle ^= ZOBRIST_ROQUES[2]
+    if diff & chess.BB_A8: cle ^= ZOBRIST_ROQUES[3]
 
-def alpha_beta (TT, board, profondeur:int , cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, alpha: float = -float('inf'), beta: float = float('inf'), maximizing: bool = True) -> tuple:
-    """
-    Ordre:
-    - Regarde la mémoire pour voir si la position a déjà été évaluée
-        - Si oui, retourne l'évaluation
-    - Si non, évalue la position (avec mini_max)
-    """
-
-    moves = list(board.legal_moves)
-    moves.sort(key=lambda move: board.is_capture(move), reverse=maximizing) #regarde d'abord les captures, trouvant peut etre des moves plus interessants comme le mat ou la prise d'une piece importante
-    
-    #print ('Profondeur :', profondeur, 'Nombre de coups possibles :', len(moves), 'Alpha :', alpha, 'Beta :', beta)
-
-    if cle in TT:
-        if TT[cle]['move'] in moves and TT[cle]['profondeur'] >= profondeur: #si le move stocke est dans la table et que le move est possible (car on peux avoir plusieurs positions qui ont la meme cle) alors on retourne l'evaluation stockee
-            return TT[cle]['score'], TT[cle]['move'], update_cle(board, cle, TT[cle]['move'], ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES) #on met à jour la clé pour la position après le coup joué
-        
-    if profondeur == 0 or board.is_game_over():
-        return evaluation (board), None, cle
-    
-    if maximizing: #si coup joueur blanc
-        best_score = -float('inf')
-        best_move = None
-        for move in moves:
-            
-            nouvelle_cle = update_cle(board, cle, move, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES)
-            board.push(move)
-            score, _, _ = alpha_beta(TT, board, profondeur -1 , nouvelle_cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, maximizing= board.turn == chess.WHITE ) 
-            board.pop() #retourne en arriere pour tester le coup suivant
-
-            if score > best_score:
-                best_score = score
-                best_move = move
-
-            alpha = max(alpha, best_score)
-
-            if alpha >= beta: #il gagne, pas besoin de continuer à chercher
-                break
-
-    else: #si coup joueur noir
-        best_score = float('inf')
-        best_move = None
-        for move in moves:
-            
-            nouvelle_cle = update_cle(board, cle, move, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES)
-            board.push(move)
-            score, _, _ = alpha_beta(TT, board, profondeur -1 , nouvelle_cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, maximizing= board.turn == chess.WHITE) 
-            board.pop()
-            
-            if score < best_score:
-                best_score = score
-                best_move = move
-            
-            beta = min(beta, best_score)
-
-            if alpha >= beta: 
-                break
-
-    if best_score <= alpha:
-        flag = UPPERBOUND
-    elif best_score >= beta:
-        flag = LOWERBOUND
-    else:
-        flag = EXACT
-
-    #print ('Mis à jour dans la TT : Profondeur :', profondeur, 'Meilleur coup :', best_move, 'Meilleur score :', best_score, 'Flag :', flag)
-    update_TT(TT, cle, best_score, best_move, profondeur, flag) #on stocke dans la memoire vive (TT)
-    return best_score, best_move, nouvelle_cle
-
-def ia_move(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, maximizing):
-    """
-    Fonction qui retourne le meilleur coup à jouer pour l'IA en utilisant l'algorithme alpha-beta
-    """
-
-    score, move, _ = alpha_beta(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, -float('inf'), float('inf'), board.turn == chess.WHITE)
-    return move
+    # nouvel en passant 
+    if piece.piece_type == chess.PAWN:
+        if abs(chess.square_rank(move.from_square) -chess.square_rank(move.to_square)) == 2:
+            file = chess.square_file(move.to_square)
+            cle ^= ZOBRIST_EN_PASSANT[file]
 
 
-EXACT = 0
-LOWERBOUND = 1
-UPPERBOUND = 2
+    # tour de jeu
+    cle ^= ZOBRIST_TOUR
 
-TAILLE_CASE = 80
-IMG_DIR = "img"
-
-def charger_image(nom, mult_size=1):
-    chemin = os.path.join(IMG_DIR, nom)
-    img = Image.open(chemin).resize((int(TAILLE_CASE * mult_size), int(TAILLE_CASE * mult_size)))
-    return ImageTk.PhotoImage(img)
-
-class ChessGUI:
-    def __init__(self, root, board, cle, TT, zobrist):
-        self.root = root
-        self.board = board
-        self.cle = cle
-        self.TT = TT
-        self.ZP, self.ZR, self.ZE, self.ZT, self.IP = zobrist
-
-        self.images = {
-            'P': charger_image("pion_blanc.png"),
-            'p': charger_image("pion_noir.png"),
-            'R': charger_image("tour_blanche.png"),
-            'r': charger_image("tour_noire.png"),
-            'N': charger_image("cavalier_blanc.png"),
-            'n': charger_image("cavalier_noir.png"),
-            'B': charger_image("fou_blanc.png"),
-            'b': charger_image("fou_noir.png"),
-            'Q': charger_image("reine_blanche.png"),
-            'q': charger_image("reine_noire.png"),
-            'K': charger_image("roi_blanc.png"),
-            'k': charger_image("roi_noir.png"),
-        }
-
-        self.plateau = charger_image("plateau.png",8)
-
-        self.canvas = tk.Canvas(
-            root,
-            width=8*TAILLE_CASE,
-            height=8*TAILLE_CASE
-        )
-        self.canvas.pack()
-
-        self.draw()
-
-    def draw(self):
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, image=self.plateau, anchor="nw")
-
-        for square in chess.SQUARES:
-            piece = self.board.piece_at(square)
-            if piece:
-                col = chess.square_file(square)
-                row = 7 - chess.square_rank(square)
-                self.canvas.create_image(
-                    col*TAILLE_CASE,
-                    row*TAILLE_CASE,
-                    image=self.images[piece.symbol()],
-                    anchor="nw"
-                )
-
-    def jouer_un_coup(self):
-        if self.board.is_game_over():
-            print("Partie terminée :", self.board.result())
-            return
-
-        move = ia_move(
-            self.TT, self.board, 3, self.cle,
-            self.ZP, self.ZR, self.ZE, self.ZT, self.IP,
-            maximizing=self.board.turn == chess.WHITE
-        )
-
-        if move is None:
-            return
-
-        self.cle = update_cle(
-            self.board, self.cle, move,
-            self.ZP, self.ZR, self.ZE, self.ZT, self.IP
-        )
-
-        self.board.push(move)
-        self.draw()
-
-        self.root.after(300, self.jouer_un_coup)
-
-# =======================
-# MAIN
-# =======================
-
-if __name__ == "__main__":
-    board = chess.Board()
-
-    TT = creer_TT()
-    zobrist = creer_zobrist()
-    cle = recuperer_cle_TT(board, *zobrist)
-
-    root = tk.Tk()
-    root.title("IA Échecs – Alpha Beta")
-
-    gui = ChessGUI(root, board, cle, TT, zobrist)
-
-    root.after(500, gui.jouer_un_coup)
-    root.mainloop()
-
-"""
-if __name__ == "__main__":
-    board = chess.Board()
-    Z = creer_TT()
-    ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES = creer_zobrist()
-    premiere_cle = recuperer_cle_TT(board, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES) #on calcule la clé de la position actuelle du plateau pour pouvoir la stocker dans la table de transposition
-    for i in range(1000):
-        move = ia_move(Z, board, profondeur=3, cle=premiere_cle, ZOBRIST_PIECES=ZOBRIST_PIECES, ZOBRIST_ROQUES=ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT=ZOBRIST_EN_PASSANT, ZOBRIST_TOUR=ZOBRIST_TOUR, INDEX_PIECES=INDEX_PIECES, maximizing=board.turn == chess.WHITE)
-        print("IA joue :", move, "Round :" , i+1, board.turn == chess.WHITE),
-        print ("Evaluation de la position :", evaluation(board))
-        board.push(move)
-        print(board)
-        if board.is_game_over(): break
-    print ("table de zobrist :", len(Z))
-    print ("Partie terminée :", board.result())
-"""
+    return cle #on fait un XOR entre la clé actuelle et le hash du coup joué pour obtenir la nouvelle clé de la position après le coup joué
