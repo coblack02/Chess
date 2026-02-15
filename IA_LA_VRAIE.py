@@ -1,5 +1,8 @@
 import chess
 from zobrist import *
+import tkinter as tk
+from PIL import Image, ImageTk
+import os
 
 def mini_max (board, profondeur, maximizing: bool):
     """
@@ -40,8 +43,8 @@ VALEURS_POSITIONS_BLANCHES = {
         50, 50, 50, 50, 50, 50, 50, 50,
         10, 10, 20, 30, 30, 20, 10, 10,
         5, 5, 10, 25, 25 , 10 , 5 , 5,
-        -10,-10,-20,-25,-25,-20,-10,-10,
-        -25,-25,-35,-45,-45,-35,-25,-25,
+        0, 0, 0, 5, 5, 0, 0, 0,
+        -5,-5,-15,-15,-15,-15,-5,-5,
         -37.5,-37.5,-47.5,-75,-75,-47.5,-37.5,-37.5,
         -50 ,-50,-50,-50,-50,-50,-50,-50
     ],
@@ -113,6 +116,40 @@ VALEURS_POSITIONS_NOIR = {
     'k': VALEURS_POSITIONS_BLANCHES['K'][::-1]
 }
 
+def is_pinned(board, square):
+    """Retourne True si la pièce sur square est clouée contre le roi adverse."""
+    piece = board.piece_at(square)
+    if piece is None:
+        return False
+
+    king_square = board.king(not piece.color)
+    if king_square is None:
+        return False
+
+    rank1, file1 = chess.square_rank(square), chess.square_file(square)
+    rank2, file2 = chess.square_rank(king_square), chess.square_file(king_square)
+
+    delta_rank = rank2 - rank1
+    delta_file = file2 - file1
+
+    step_rank = 0 if delta_rank == 0 else (delta_rank // abs(delta_rank))
+    step_file = 0 if delta_file == 0 else (delta_file // abs(delta_file))
+
+    if step_rank == 0 and step_file == 0:
+        return False
+
+    r, f = rank1 + step_rank, file1 + step_file
+    blockers = 0
+    while (r, f) != (rank2, file2):
+        if not (0 <= r <= 7 and 0 <= f <= 7):
+            break  # carré hors plateau
+        sq = chess.square(f, r)
+        if board.piece_at(sq) is not None:
+            blockers += 1
+        r += step_rank
+        f += step_file
+
+    return blockers == 1
 
 def evaluation (board):
     """
@@ -123,19 +160,134 @@ def evaluation (board):
     """
     score = 0
 
-    if board.is_checkmate():   
+    # Fin de partie
+    if board.is_checkmate():
         return -float('inf') if board.turn else float('inf')
     if board.is_stalemate() or board.is_insufficient_material():
         return 0
-        
+
+    num_moves_played = board.fullmove_number
+    total_pieces = sum(1 for sq in chess.SQUARES if board.piece_at(sq) is not None)
+    early_game_coeff = min(1, total_pieces / 32)
+
+    # Pré-calcul mobilité
+    mobility = {sq:0 for sq in chess.SQUARES}
+    for move in board.legal_moves:
+        mobility[move.from_square] += 1
+
+    # Pré-calcul attaquants
+    attackers_white = {sq: board.attackers(chess.WHITE, sq) for sq in chess.SQUARES}
+    attackers_black = {sq: board.attackers(chess.BLACK, sq) for sq in chess.SQUARES}
+
+    # Cases centrales
+    CENTER = [chess.D4, chess.E4, chess.D5, chess.E5]
+
+    # Boucle principale sur toutes les pièces
     for square in chess.SQUARES:
         piece = board.piece_at(square)
-        if piece is not None:
-            piece_value = VALEURS_PIECES[piece.symbol().lower()]
+        if piece is None:
+            continue
+
+        symbol = piece.symbol()
+        value = VALEURS_PIECES[symbol.lower()]
+        table_value = (VALEURS_POSITIONS_BLANCHES[symbol][square] if piece.color == chess.WHITE
+                       else VALEURS_POSITIONS_NOIR[symbol.lower()][square])
+        table_value *= early_game_coeff
+
+        piece_score = value + table_value
+
+        # Mobilité pondérée
+        piece_score += mobility[square] * (1 if symbol.lower() in ['p','n','b'] else 3)
+
+        # Protégé / attaqué
+        defenders = attackers_white[square] if piece.color == chess.WHITE else attackers_black[square]
+        attackers_set = attackers_black[square] if piece.color == chess.WHITE else attackers_white[square]
+        if defenders:
+            piece_score *= 1.1
+        if attackers_set:
+            piece_score *= 0.9
+
+        # Développement début de partie
+        if num_moves_played <= 12:
             if piece.color == chess.WHITE:
-                score += piece_value + VALEURS_POSITIONS_BLANCHES[piece.symbol()][square]
+                if symbol in ['N','B','R','Q'] and square in [chess.B1,chess.G1,chess.C1,chess.F1,chess.D1,chess.E1,chess.A1,chess.H1]:
+                    piece_score += 30
+                elif symbol == 'P' and square in [chess.C2,chess.D2,chess.E2,chess.F2]:
+                    piece_score += 20
             else:
-                score -= piece_value + VALEURS_POSITIONS_NOIR[piece.symbol()][square]
+                if symbol in ['n','b','r','q'] and square in [chess.B8,chess.G8,chess.C8,chess.F8,chess.D8,chess.E8,chess.A8,chess.H8]:
+                    piece_score += 30
+                elif symbol == 'p' and square in [chess.C7,chess.D7,chess.E7,chess.F7]:
+                    piece_score += 20
+
+        # Contrôle du centre
+        if square in CENTER:
+            piece_score += 10 if piece.color == chess.WHITE else -10
+
+        # Avancement des pions centraux
+        if symbol.lower() == 'p':
+            rank = chess.square_rank(square)
+            if piece.color == chess.WHITE and rank >= 3:
+                piece_score += 5
+            elif piece.color == chess.BLACK and rank <= 4:
+                piece_score += 5
+
+        # Pins
+        if is_pinned(board, square):
+            piece_score += 20 if piece.color == chess.WHITE else -20
+
+        score += piece_score if piece.color == chess.WHITE else -piece_score
+
+    # Pions doublés / passés
+    for file in range(8):
+        pawns_white = [sq for sq in chess.SQUARES if board.piece_at(sq) and board.piece_at(sq).symbol() == 'P' and chess.square_file(sq) == file]
+        pawns_black = [sq for sq in chess.SQUARES if board.piece_at(sq) and board.piece_at(sq).symbol() == 'p' and chess.square_file(sq) == file]
+
+        # Doublés
+        if len(pawns_white) > 1:
+            score -= 10 * (len(pawns_white)-1)
+        if len(pawns_black) > 1:
+            score += 10 * (len(pawns_black)-1)
+
+        # Pions passés
+        for sq in pawns_white:
+            is_passed = True
+            for f in range(max(0,file-1), min(8,file+2)):
+                for r in range(chess.square_rank(sq)+1, 8):
+                    p = board.piece_at(chess.square(f,r))
+                    if p and p.color == chess.BLACK and p.symbol().lower() == 'p':
+                        is_passed = False
+            if is_passed:
+                score += 20
+        for sq in pawns_black:
+            is_passed = True
+            for f in range(max(0,file-1), min(8,file+2)):
+                for r in range(0, chess.square_rank(sq)):
+                    p = board.piece_at(chess.square(f,r))
+                    if p and p.color == chess.WHITE and p.symbol().lower() == 'p':
+                        is_passed = False
+            if is_passed:
+                score -= 20
+
+    # Bonus tactiques
+    if board.turn == chess.WHITE:
+        score += 50 if board.is_check() else 0
+    else:
+        score -= 50 if board.is_check() else 0
+
+    # Fourchettes
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if not piece:
+            continue
+        attacks = board.attacks(square)
+        important_targets = [t for t in attacks if board.piece_at(t) and board.piece_at(t).symbol().lower() in ['k','q','r','b','n']]
+        if len(important_targets) >= 2:
+            if piece.color == chess.WHITE:
+                score += 50
+            else:
+                score -= 50
+
     return score
 
 def alpha_beta (TT, board, profondeur:int , cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, alpha: float = -float('inf'), beta: float = float('inf'), maximizing: bool = True) -> tuple:
@@ -215,10 +367,113 @@ def ia_move(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_
     score, move, _ = alpha_beta(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, -float('inf'), float('inf'), board.turn == chess.WHITE)
     return move
 
+
 EXACT = 0
 LOWERBOUND = 1
 UPPERBOUND = 2
 
+TAILLE_CASE = 80
+IMG_DIR = "img"
+
+def charger_image(nom, mult_size=1):
+    chemin = os.path.join(IMG_DIR, nom)
+    img = Image.open(chemin).resize((int(TAILLE_CASE * mult_size), int(TAILLE_CASE * mult_size)))
+    return ImageTk.PhotoImage(img)
+
+class ChessGUI:
+    def __init__(self, root, board, cle, TT, zobrist):
+        self.root = root
+        self.board = board
+        self.cle = cle
+        self.TT = TT
+        self.ZP, self.ZR, self.ZE, self.ZT, self.IP = zobrist
+
+        self.images = {
+            'P': charger_image("pion_blanc.png"),
+            'p': charger_image("pion_noir.png"),
+            'R': charger_image("tour_blanche.png"),
+            'r': charger_image("tour_noire.png"),
+            'N': charger_image("cavalier_blanc.png"),
+            'n': charger_image("cavalier_noir.png"),
+            'B': charger_image("fou_blanc.png"),
+            'b': charger_image("fou_noir.png"),
+            'Q': charger_image("reine_blanche.png"),
+            'q': charger_image("reine_noire.png"),
+            'K': charger_image("roi_blanc.png"),
+            'k': charger_image("roi_noir.png"),
+        }
+
+        self.plateau = charger_image("plateau.png",8)
+
+        self.canvas = tk.Canvas(
+            root,
+            width=8*TAILLE_CASE,
+            height=8*TAILLE_CASE
+        )
+        self.canvas.pack()
+
+        self.draw()
+
+    def draw(self):
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, image=self.plateau, anchor="nw")
+
+        for square in chess.SQUARES:
+            piece = self.board.piece_at(square)
+            if piece:
+                col = chess.square_file(square)
+                row = 7 - chess.square_rank(square)
+                self.canvas.create_image(
+                    col*TAILLE_CASE,
+                    row*TAILLE_CASE,
+                    image=self.images[piece.symbol()],
+                    anchor="nw"
+                )
+
+    def jouer_un_coup(self):
+        if self.board.is_game_over():
+            print("Partie terminée :", self.board.result())
+            return
+
+        move = ia_move(
+            self.TT, self.board, 3, self.cle,
+            self.ZP, self.ZR, self.ZE, self.ZT, self.IP,
+            maximizing=self.board.turn == chess.WHITE
+        )
+
+        if move is None:
+            return
+
+        self.cle = update_cle(
+            self.board, self.cle, move,
+            self.ZP, self.ZR, self.ZE, self.ZT, self.IP
+        )
+
+        self.board.push(move)
+        self.draw()
+
+        self.root.after(300, self.jouer_un_coup)
+
+# =======================
+# MAIN
+# =======================
+
+if __name__ == "__main__":
+    board = chess.Board()
+
+    TT = creer_TT()
+    zobrist = creer_zobrist()
+    cle = recuperer_cle_TT(board, *zobrist)
+
+    root = tk.Tk()
+    root.title("IA Échecs – Alpha Beta")
+
+    gui = ChessGUI(root, board, cle, TT, zobrist)
+
+    root.after(500, gui.jouer_un_coup)
+    root.mainloop()
+
+"""
 if __name__ == "__main__":
     board = chess.Board()
     Z = creer_TT()
@@ -233,5 +488,4 @@ if __name__ == "__main__":
         if board.is_game_over(): break
     print ("table de zobrist :", len(Z))
     print ("Partie terminée :", board.result())
-
-
+"""
