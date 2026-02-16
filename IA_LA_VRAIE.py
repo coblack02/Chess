@@ -3,6 +3,7 @@ from zobrist import *
 import tkinter as tk
 from PIL import Image, ImageTk
 import os
+import json
 
 def mini_max (board, profondeur, maximizing: bool):
     """
@@ -297,6 +298,7 @@ def alpha_beta (TT, board, profondeur:int , cle, ZOBRIST_PIECES, ZOBRIST_ROQUES,
         - Si oui, retourne l'évaluation
     - Si non, évalue la position (avec mini_max)
     """
+    
 
     moves = list(board.legal_moves)
     moves.sort(key=lambda move: board.is_capture(move), reverse=maximizing) #regarde d'abord les captures, trouvant peut etre des moves plus interessants comme le mat ou la prise d'une piece importante
@@ -364,7 +366,7 @@ def ia_move(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_
     Fonction qui retourne le meilleur coup à jouer pour l'IA en utilisant l'algorithme alpha-beta
     """
 
-    score, move, _ = alpha_beta(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, -float('inf'), float('inf'), board.turn == chess.WHITE)
+    _ , move, _ = alpha_beta(TT, board, profondeur, cle, ZOBRIST_PIECES, ZOBRIST_ROQUES, ZOBRIST_EN_PASSANT, ZOBRIST_TOUR, INDEX_PIECES, -float('inf'), float('inf'), board.turn == chess.WHITE)
     return move
 
 
@@ -379,6 +381,48 @@ def charger_image(nom, mult_size=1):
     chemin = os.path.join(IMG_DIR, nom)
     img = Image.open(chemin).resize((int(TAILLE_CASE * mult_size), int(TAILLE_CASE * mult_size)))
     return ImageTk.PhotoImage(img)
+
+
+MEMOIRE_FILE = "memoire.json"
+
+def load_memoire():
+    if os.path.exists(MEMOIRE_FILE):
+        try:
+            with open(MEMOIRE_FILE, "r") as f:
+                memoire = json.load(f)
+        except json.JSONDecodeError:
+            print("Mémoire corrompue. Nouvelle mémoire créée.")
+            memoire = {}
+    else:
+        memoire = {}
+    return memoire
+
+def save_memoire(memoire):
+    with open(MEMOIRE_FILE, "w") as f:
+        json.dump(memoire, f, indent=2)
+
+def update_memory(memoire,board, move, eval_score):
+    uci = move.uci()
+    if board not in memoire:
+        memoire[board] = {"moves": {}}
+    if "moves" not in memoire[board]:
+        memoire[board]["moves"] = {}
+    if uci not in memoire[board]["moves"]:
+        memoire[board]["moves"][uci] = []
+    memoire[board]["moves"][uci].append(eval_score)
+
+def find_move_memory(memoire,board):
+    if board in memoire and "moves" in memoire[board]:
+        score_max=0
+        move_max=None
+        for move in memoire[board]["moves"]:
+            if move[move.uci()]>score_max:
+                score_max=move[move.uci()]
+                move_max=move
+        return move_max
+    return None
+
+
 
 class ChessGUI:
     def __init__(self, root, board, cle, TT, zobrist):
