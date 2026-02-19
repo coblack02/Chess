@@ -2,37 +2,51 @@ import chess
 import chess.polyglot
 import random
 
-BOOK_PATH = "komodo.bin"
+# Les 4 livres d'ouverture, dans l'ordre de priorité
+BOOK_PATHS = [
+    "gm2001.bin",
+    "rodent.bin",
+    "komodo.bin"
+]
 
 def polyglot_move(board):
     """
     Retourne un coup du livre d'ouverture pour la position donnée.
-    Utilise une sélection pondérée aléatoire parmi les coups disponibles
-    pour varier le jeu entre les parties (plutôt que toujours le même coup).
-    Retourne None si aucun coup n'est trouvé ou si le fichier est absent.
+    Consulte les 4 livres et fusionne tous les coups trouvés.
+    Utilise une sélection pondérée aléatoire pour varier le jeu.
+    Retourne None si aucun coup n'est trouvé dans aucun livre.
     """
-    try:
-        with chess.polyglot.open_reader(BOOK_PATH) as reader:
-            entries = list(reader.find_all(board))
-            if not entries:
-                return None
+    all_entries = {}  # move_uci -> poids cumulé
 
-            # Sélection pondérée : les coups avec un poids élevé sont
-            # favorisés mais pas toujours choisis → variété entre parties
-            total = sum(e.weight for e in entries)
-            if total == 0:
-                return random.choice(entries).move
+    for book_path in BOOK_PATHS:
+        try:
+            with chess.polyglot.open_reader(book_path) as reader:
+                for entry in reader.find_all(board):
+                    key = entry.move.uci()
+                    if key in all_entries:
+                        all_entries[key] = (entry.move, all_entries[key][1] + entry.weight)
+                    else:
+                        all_entries[key] = (entry.move, entry.weight)
+        except FileNotFoundError:
+            print(f" Livre introuvable : {book_path}")
+        except Exception as e:
+            print(f"  Erreur lecture {book_path} : {e}")
 
-            r     = random.randint(0, total - 1)
-            cumul = 0
-            for e in entries:
-                cumul += e.weight
-                if r < cumul:
-                    return e.move
-
-            return entries[-1].move  # fallback
-
-    except FileNotFoundError:
+    if not all_entries:
         return None
-    except Exception:
-        return None
+
+    entries = list(all_entries.values())  # liste de (move, poids)
+    total = sum(w for _, w in entries)
+
+    if total == 0:
+        return random.choice(entries)[0]
+
+    # Sélection pondérée
+    r = random.randint(0, total - 1)
+    cumul = 0
+    for move, weight in entries:
+        cumul += weight
+        if r < cumul:
+            return move
+
+    return entries[-1][0]  # fallback
