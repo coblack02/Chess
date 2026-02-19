@@ -1,103 +1,45 @@
-import chess
 from zobrist import *
 from openings import polyglot_move
+from gestion_memoire import *
 import random
 
 EXACT = 0
 LOWERBOUND = 1
 UPPERBOUND = 2
 
-VALEURS_PIECES = {
-    chess.PAWN: 100,
-    chess.KNIGHT: 320,
-    chess.BISHOP: 330,
-    chess.ROOK: 500,
-    chess.QUEEN: 900,
-    chess.KING: 20000
-}
 
-# ============================================================
-# TABLES DE POSITIONS
-# Écrites du point de vue des BLANCS (rang 8 en haut, rang 1 en bas)
-# chess.SQUARES : A1=0 ... H8=63 (rang 1 en bas)
-# Pour accéder correctement : square ^ 56  pour les blancs
-#                              square       pour les noirs (déjà miroir)
-# ============================================================
+def extract_features(board):
+    features = {
+        "material": 0,
+        "psqt": 0,
+        "mobility": 0
+    }
 
-TABLE_PION = [
-     0,  0,  0,  0,  0,  0,  0,  0,
-    50, 50, 50, 50, 50, 50, 50, 50,
-    15, 15, 25, 35, 35, 25, 15, 15,
-    15, 15, 20, 35, 35, 20, 15, 15,
-    15, 15, 20, 25, 25, 20, 15, 15,
-    10, 10,  5,  5,  5,  5, 10, 10,
-   -37,-37,-47,-75,-75,-47,-37,-37,
-     0,  0,  0,  0,  0,  0,  0,  0
-]
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if piece is None:
+            continue
 
-TABLE_CAVALIER = [
-    -60,-50,-40,-40,-40,-40,-50,-60,
-    -50,-30,-10,-10,-10,-10,-30,-50,
-    -40,-10,  0,  5,  5,  0,-10,-40,
-    -40, -5,  5, 10, 10,  5, -5,-40,
-    -40, -5,  5, 10, 10,  5, -5,-40,
-    -40,-10,  0,  5,  5,  0,-10,-40,
-    -50,-30,-10,-10,-10,-10,-30,-50,
-    -60,-50,-40,-40,-40,-40,-50,-60
-]
+        sign = 1 if piece.color == chess.WHITE else -1
 
-TABLE_FOU = [
-    -20, -10, -10, -10, -10, -10, -10, -20,
-    -10,   0,   0,   0,   0,   0,   0, -10,
-    -10,   0,   5,  10,  10,   5,   0, -10,
-    -10,   5,   5,  10,  10,   5,   5, -10,
-    -10,   0,  10,  10,  10,  10,   0, -10,
-    -10,  10,  10,  10,  10,  10,  10, -10,
-    -10,   5,   0,   0,   0,   0,   5, -10,
-    -20, -10, -10, -10, -10, -10, -10, -20
-]
+        features["material"] += sign * VALEURS_PIECES[piece.piece_type]
+        features["psqt"] += sign * get_position_value(
+            piece.piece_type, square, piece.color
+        )
 
-TABLE_TOUR = [
-      0,   0,   0,   0,   0,   0,   0,   0,
-      5,  10,  10,  10,  10,  10,  10,   5,
-     -5,   0,   0,   0,   0,   0,   0,  -5,
-     -5,   0,   0,   0,   0,   0,   0,  -5,
-     -5,   0,   0,   0,   0,   0,   0,  -5,
-     -5,   0,   0,   0,   0,   0,   0,  -5,
-     -5,   0,   0,   0,   0,   0,   0,  -5,
-      0,   0,   0,   5,   5,   0,   0,   0
-]
+    mobility = len(list(board.legal_moves))
+    features["mobility"] = mobility if board.turn == chess.WHITE else -mobility
 
-TABLE_DAME = [
-    -20, -10, -10,  -5,  -5, -10, -10, -20,
-    -10,   0,   0,   0,   0,   0,   0, -10,
-    -10,   0,   5,   5,   5,   5,   0, -10,
-     -5,   0,   5,   5,   5,   5,   0,  -5,
-      0,   0,   5,   5,   5,   5,   0,  -5,
-    -10,   5,   5,   5,   5,   5,   0, -10,
-    -10,   0,   5,   0,   0,   0,   0, -10,
-    -20, -10, -10,  -5,  -5, -10, -10, -20
-]
+    return features
 
-TABLE_ROI = [
-    -30, -40, -40, -50, -50, -40, -40, -30,
-    -30, -40, -40, -50, -50, -40, -40, -30,
-    -30, -40, -40, -50, -50, -40, -40, -30,
-    -30, -40, -40, -50, -50, -40, -40, -30,
-    -20, -30, -30, -40, -40, -30, -30, -20,
-    -10, -20, -20, -20, -20, -20, -20, -10,
-     20,  20,   0,   0,   0,   0,  20,  20,
-     20,  30,  10,   0,   0,  10,  30,  20
-]
+def learn_from_position(board, result, lr=0.00001):
+    features = extract_features(board)
+    prediction = evaluate(board)
 
-TABLES = {
-    chess.PAWN:   TABLE_PION,
-    chess.KNIGHT: TABLE_CAVALIER,
-    chess.BISHOP: TABLE_FOU,
-    chess.ROOK:   TABLE_TOUR,
-    chess.QUEEN:  TABLE_DAME,
-    chess.KING:   TABLE_ROI,
-}
+    error = result - prediction
+
+    for k in WEIGHTS:
+        WEIGHTS[k] += lr * error * features[k]
 
 def get_position_value(piece_type, square, color):
     """
@@ -125,24 +67,11 @@ def evaluate(board):
 
     score = 0
 
-    for square in chess.SQUARES:
-        piece = board.piece_at(square)
-        if piece is None:
-            continue
+    features = extract_features(board)
 
-        value = VALEURS_PIECES[piece.piece_type] + get_position_value(piece.piece_type, square, piece.color)
-
-        if piece.color == chess.WHITE:
-            score += value
-        else:
-            score -= value
-
-    # Bonus mobilité (léger)
-    mobility = len(list(board.legal_moves)) * 5
-    if board.turn == chess.WHITE:
-        score += mobility
-    else:
-        score -= mobility
+    score = 0
+    for name, value in features.items():
+        score += WEIGHTS[name] * value
 
     return score
 
