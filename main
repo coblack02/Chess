@@ -1,12 +1,13 @@
 from tkinter import Tk
 from chess import Board, WHITE, BLACK
-import chess
 from zobrist import *
-from IA_LA_VRAIE import ia_move
+from IA_LA_VRAIE import ia_move, learn_from_position
+from gestion_memoire import *
 
 # Taille maximale de la table de transposition
 # Au-delà, on la vide à moitié pour éviter une consommation mémoire infinie
-TT_MAX_SIZE = 200_000
+
+TT_MAX_SIZE = 200000
 
 class JoueurIA:
     """
@@ -22,7 +23,7 @@ class JoueurIA:
 
         #  Profondeur 3 : bon compromis vitesse/qualité
         # (profondeur 4 = ~20x plus lent que profondeur 3)
-        self.profondeur = 3
+        self.profondeur = 3 
 
         print(f" JoueurIA initialisé ({'Blanc' if couleur == WHITE else 'Noir'})")
 
@@ -40,8 +41,6 @@ class JoueurIA:
         couleur = 'Blancs' if self.board.turn == WHITE else 'Noirs'
         print(f" Calcul pour {couleur} (profondeur {self.profondeur}, TT: {len(self.TT)})...")
 
-        # Nettoyage préventif de la TT
-        self._nettoyer_TT()
 
         move = ia_move(
             self.TT,
@@ -85,3 +84,10 @@ if __name__ == "__main__":
     ui = Chess_UI(root, board, ia_blanc, ia_noir)
 
     root.mainloop()
+
+    result = 1 if board.result() == "1-0" else -1 if board.result() == "0-1" else 0
+
+    for board_state in ui.history:
+        learn_from_position(board_state, result)
+
+    save_memoire()
