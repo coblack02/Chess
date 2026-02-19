@@ -2,7 +2,7 @@ import chess
 import chess.polyglot
 
 
-BOOK_PATH = "book.bin"
+BOOK_PATH = "komodo.bin"
 
 def polyglot_move(board):
     try:
