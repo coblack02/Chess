@@ -1,0 +1,87 @@
+from tkinter import Tk
+from chess import Board, WHITE, BLACK
+import chess
+from zobrist import *
+from IA_LA_VRAIE import ia_move
+
+# Taille maximale de la table de transposition
+# Au-delà, on la vide à moitié pour éviter une consommation mémoire infinie
+TT_MAX_SIZE = 200_000
+
+class JoueurIA:
+    """
+    Classe qui encapsule TOUTE la logique de l'IA.
+    La TT est stockée dans l'INSTANCE (pas en global).
+    """
+    def __init__(self, board, couleur):
+        self.board = board
+        self.couleur = couleur
+
+        self.TT = creer_TT()
+        self.ZOBRIST_PIECES, self.ZOBRIST_ROQUES, self.ZOBRIST_EN_PASSANT, self.ZOBRIST_TOUR, self.INDEX_PIECES = creer_zobrist()
+
+        #  Profondeur 3 : bon compromis vitesse/qualité
+        # (profondeur 4 = ~20x plus lent que profondeur 3)
+        self.profondeur = 3
+
+        print(f" JoueurIA initialisé ({'Blanc' if couleur == WHITE else 'Noir'})")
+
+    def _nettoyer_TT(self):
+        """Vide la moitié de la TT quand elle devient trop grande."""
+        if len(self.TT) > TT_MAX_SIZE:
+            cles = list(self.TT.keys())
+            # Supprimer la première moitié (les plus anciennes entrées)
+            for cle in cles[:len(cles) // 2]:
+                del self.TT[cle]
+            print(f"🧹 TT nettoyée : {len(self.TT)} entrées restantes")
+
+    def coup(self):
+        """Calcule et retourne le meilleur coup en notation SAN."""
+        couleur = 'Blancs' if self.board.turn == WHITE else 'Noirs'
+        print(f" Calcul pour {couleur} (profondeur {self.profondeur}, TT: {len(self.TT)})...")
+
+        # Nettoyage préventif de la TT
+        self._nettoyer_TT()
+
+        move = ia_move(
+            self.TT,
+            self.board,
+            self.profondeur,
+            self.ZOBRIST_PIECES,
+            self.ZOBRIST_ROQUES,
+            self.ZOBRIST_EN_PASSANT,
+            self.ZOBRIST_TOUR,
+            self.INDEX_PIECES
+        )
+
+        if move is None:
+            print(" Aucun coup trouvé, coup aléatoire")
+            import random
+            move = random.choice(list(self.board.legal_moves))
+
+        san = self.board.san(move)
+        print(f" {couleur} jouent : {san}")
+        return san
+
+
+if __name__ == "__main__":
+    print("Lancement du tournoi d'échecs...\n")
+
+    root = Tk()
+    root.title("IA d'Échecs")
+
+    board = Board()
+
+    print(" Création IA Blancs...")
+    ia_blanc = JoueurIA(board, WHITE)
+
+    print(" Création IA Noirs...")
+    ia_noir = JoueurIA(board, BLACK)
+
+    print("\n Chargement de l'interface...")
+    from canvas_tkinter import Chess_UI
+
+    print(" Lancement de la partie!\n")
+    ui = Chess_UI(root, board, ia_blanc, ia_noir)
+
+    root.mainloop()
