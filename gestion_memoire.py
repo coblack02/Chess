@@ -39,3 +39,20 @@ def save_memoire():
 
     with open(MEMOIRE_FILE, "w") as f:
         json.dump(memoire, f, indent=4)
+
+def save_memoire():
+    memoire["WEIGHTS"] = WEIGHTS
+    memoire["VALEURS_PIECES"] = {
+        chess.piece_name(k).upper(): v for k, v in VALEURS_PIECES.items()
+    }
+    memoire["TABLES_POSITION"] = {
+        chess.piece_name(k).upper(): v for k, v in TABLES.items()
+    }
+    memoire["PROFONDEUR"] = {
+        "ouverture": 4,
+        "milieu": 5,
+        "fin": 6
+    }
+
+    with open(MEMOIRE_FILE, "w") as f:
+        json.dump(memoire, f, indent=4)
