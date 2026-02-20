@@ -165,7 +165,7 @@ def jouer_partie(numero: int) -> int:
 
     while not board.is_game_over():
         if nb_coups >= MAX_MOVES:
-            print(f"    ⚠️  Limite de {MAX_MOVES} coups atteinte — nulle")
+            print(f"Limite de {MAX_MOVES} coups atteinte — nulle")
             break
 
         ia   = ia_blanc if board.turn == chess.WHITE else ia_noir
@@ -208,7 +208,7 @@ def entrainement() -> None:
     i     = 0
 
     print(f"\n{'═'*55}")
-    print(f"  🏋️  ENTRAÎNEMENT HEADLESS — boucle infinie")
+    print(f"ENTRAÎNEMENT HEADLESS — boucle infinie")
     print(f"  Arrêt propre : Ctrl+C")
     print(f"{'═'*55}\n")
 
@@ -230,20 +230,20 @@ def entrainement() -> None:
             if i % 10 == 0:
                 total = stats["1-0"] + stats["0-1"] + stats["nulle"]
                 duree = time.time() - debut_total
-                print(f"\n  📊 Bilan après {i} parties ({duree/60:.1f} min) :")
+                print(f"\n  Bilan après {i} parties ({duree/60:.1f} min) :")
                 print(f"     Blancs : {stats['1-0']:>4} ({100*stats['1-0']//total:>3}%)")
                 print(f"     Noirs  : {stats['0-1']:>4} ({100*stats['0-1']//total:>3}%)")
                 print(f"     Nulles : {stats['nulle']:>4} ({100*stats['nulle']//total:>3}%)\n")
 
     except KeyboardInterrupt:
-        print(f"\n\n  ⛔ Arrêt demandé — sauvegarde en cours...")
+        print(f"\n\n  Arrêt demandé — sauvegarde en cours...")
         save_memoire()
 
         duree_totale = time.time() - debut_total
         total        = max(i, 1)
         print(f"\n{'═'*55}")
-        print(f"  ✅ ENTRAÎNEMENT ARRÊTÉ après {i} parties ({duree_totale/60:.1f} min)")
-        print(f"  📊 Résultats finaux :")
+        print(f"  ENTRAÎNEMENT ARRÊTÉ après {i} parties ({duree_totale/60:.1f} min)")
+        print(f"  Résultats finaux :")
         print(f"     Blancs : {stats['1-0']:>4} ({100*stats['1-0']//total:>3}%)")
         print(f"     Noirs  : {stats['0-1']:>4} ({100*stats['0-1']//total:>3}%)")
         print(f"     Nulles : {stats['nulle']:>4} ({100*stats['nulle']//total:>3}%)")
@@ -252,3 +252,4 @@ def entrainement() -> None:
 
 if __name__ == "__main__":
     entrainement()
+
