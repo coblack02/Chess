@@ -232,7 +232,7 @@ def _recherche_complete(board, depth, root_cle, TT, ZP, ZR, ZE, ZT, IP, killers,
     return best_move, best_score
 
 
-def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP, max_time=2):
+def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP, max_time=0.2):
     """
     Iterative Deepening + Aspiration Windows.
     Hash Zobrist incrémental — calculé une seule fois à la racine.
