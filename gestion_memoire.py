@@ -72,7 +72,7 @@ def _sane_weights(weights: dict) -> dict:
     """
     for v in weights.values():
         if abs(v) > WEIGHT_CLAMP:
-            print(f"⚠️  Poids explosé détecté ({v:.2e}) → reset des WEIGHTS aux valeurs par défaut")
+            print(f" Poids explosé détecté ({v:.2e}) → reset des WEIGHTS aux valeurs par défaut")
             return dict(DEFAULT_WEIGHTS)
     return weights
 
