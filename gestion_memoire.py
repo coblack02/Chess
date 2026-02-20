@@ -41,6 +41,7 @@ def load_memoire():
 VALEURS_PIECES, TABLES, MOBILITY_MULTIPLIER, PIN_PENALTY, TEMPO_BONUS, WEIGHTS, PROFONDEURS = load_memoire()
 
 def save_memoire():
+    VALEURS_PIECES, TABLES, MOBILITY_MULTIPLIER, PIN_PENALTY, TEMPO_BONUS, WEIGHTS, PROFONDEURS = load_memoire()
     memoire["WEIGHTS"] = WEIGHTS
     memoire["VALEURS_PIECES"] = {
         chess.piece_name(k).upper(): v for k, v in VALEURS_PIECES.items()
