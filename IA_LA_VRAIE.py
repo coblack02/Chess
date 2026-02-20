@@ -2,6 +2,7 @@ import chess
 from zobrist import *
 from openings import polyglot_move
 from gestion_memoire import *
+import time
 
 EXACT = 0
 LOWERBOUND = 1
@@ -31,14 +32,22 @@ def extract_features(board):
 
     return features
 
-def learn_from_position(board, result, lr=0.00001):
+def learn_from_position(board, result, coup=None, lr=0.00001):
     features = extract_features(board)
     prediction = evaluate(board)
 
     error = result - prediction
 
+    # Mise à jour des poids
     for k in WEIGHTS:
         WEIGHTS[k] += lr * error * features[k]
+
+    # Si le coup est important, on ajuste plus fortement les poids
+    if coup and est_coup_important(board, coup):
+        for k in WEIGHTS:
+            WEIGHTS[k] += lr * error * features[k] * 2  # Double ajustement pour les coups importants
+
+    save_memoire()
 
 def get_position_value(piece_type, square, color):
     table = TABLES[piece_type]
@@ -77,7 +86,7 @@ def mvv_lva(board, move):
     return 10 * v - a
 
 
-def quiescence(board, alpha, beta, max_depth=3):
+def quiescence(board, alpha, beta, max_depth=5):
     """Quiescence search avec MVV-LVA."""
     stand_pat = evaluate(board)
 
@@ -244,7 +253,7 @@ def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP):
     prev_score = 0
     WINDOW     = 50
 
-    for current_depth in range(1, depth + 1):
+    for current_depth in range(1, depth+1):
 
         if current_depth >= 3:
             # Essai avec aspiration window
@@ -302,3 +311,43 @@ def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP):
         print(f"  🔍 Profondeur {current_depth} → {board.san(best_move)} (score: {prev_score})")
 
     return best_move
+
+def est_coup_important(board, move):
+    # Retourne True si le coup est considéré comme important
+    if board.is_capture(move):
+        return True
+    if move.promotion:
+        return True
+    if board.gives_check(move):
+        return True
+    if board.is_checkmate():
+        return True
+    return False
+
+def ia_move_with_timer(TT, board, depth, ZP, ZR, ZE, ZT, IP, max_time=0.5):
+    start_time = time.time()
+    move = ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP)
+    elapsed = time.time() - start_time
+
+    if elapsed > max_time:
+        # Enregistrer la position et le coup dans coups.json
+        save_coup_to_json(board, move)
+
+    return move
+
+def save_coup_to_json(board, move):
+    position = {
+        "fen": board.fen(),
+        "move": move.uci(),
+    }
+
+    try:
+        with open("coups.json", "r") as f:
+            coups = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        coups = []
+
+    coups.append(position)
+
+    with open("coups.json", "w") as f:
+        json.dump(coups, f, indent=4)
