@@ -232,7 +232,7 @@ def _recherche_complete(board, depth, root_cle, TT, ZP, ZR, ZE, ZT, IP, killers,
     return best_move, best_score
 
 
-def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP):
+def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP, max_time=2):
     """
     Iterative Deepening + Aspiration Windows.
     Hash Zobrist incrémental — calculé une seule fois à la racine.
@@ -247,11 +247,12 @@ def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP):
     killers  = [set() for _ in range(depth + 2)]
     history  = {}
     root_cle = hash_zobrist(board, ZP, ZR, ZE, ZT, IP)
-
+    
     # Initialisation : coup légal par défaut pour garantir qu'on retourne toujours quelque chose
     best_move  = next(iter(board.legal_moves))
     prev_score = 0
     WINDOW     = 50
+    start_time = time.time()
 
     for current_depth in range(1, depth+1):
 
@@ -307,8 +308,10 @@ def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP):
         if iter_best is not None:
             best_move  = iter_best
             prev_score = iter_score
-
-        print(f"  🔍 Profondeur {current_depth} → {board.san(best_move)} (score: {prev_score})")
+   
+        if (time.time() - start_time) > max_time:
+            print(f"  ⏱️ Temps écoulé, arrêt de la recherche à profondeur {current_depth}")
+            break
 
     return best_move
 
@@ -323,31 +326,3 @@ def est_coup_important(board, move):
     if board.is_checkmate():
         return True
     return False
-
-def ia_move_with_timer(TT, board, depth, ZP, ZR, ZE, ZT, IP, max_time=0.5):
-    start_time = time.time()
-    move = ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP)
-    elapsed = time.time() - start_time
-
-    if elapsed > max_time:
-        # Enregistrer la position et le coup dans coups.json
-        save_coup_to_json(board, move)
-
-    return move
-
-def save_coup_to_json(board, move):
-    position = {
-        "fen": board.fen(),
-        "move": move.uci(),
-    }
-
-    try:
-        with open("coups.json", "r") as f:
-            coups = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        coups = []
-
-    coups.append(position)
-
-    with open("coups.json", "w") as f:
-        json.dump(coups, f, indent=4)
