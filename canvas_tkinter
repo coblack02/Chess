@@ -1,22 +1,86 @@
+"""
+canvas_tkinter.py
+=================
+Interface graphique Tkinter pour visualiser une partie d'échecs IA vs IA.
+
+Responsabilités :
+    - Afficher le plateau et les pièces via un Canvas Tkinter.
+    - Faire tourner le calcul IA dans un thread secondaire pour ne pas
+      geler l'interface pendant la réflexion.
+    - Afficher l'historique des coups en notation SAN.
+    - Afficher le résultat de la partie (mat, pat, nulle).
+
+Dépendances :
+    - Pillow (PIL) pour charger et redimensionner les images des pièces.
+    - python-chess pour la logique du jeu.
+    - canvas_tkinter s'appuie sur des images dans le dossier img/.
+
+Utilisation :
+    Instancier Chess_UI(root, board, joueur_blanc, joueur_noir) depuis main.py.
+    Les joueurs doivent exposer une méthode coup() → str (notation SAN).
+"""
+
 from tkinter import *
 from tkinter import ttk
 from PIL import Image, ImageTk
 from chess import *
 import threading
 
-# Variables globales - Taille réduite
-board_width = 640
+# ── Dimensions du plateau en pixels ──────────────────────────────────────────
+board_width  = 640
 board_height = 640
 
 
 class Chess_UI:
     """
-    Gère l'affichage du plateau d'échecs.
-    Le calcul de l'IA tourne dans un thread séparé pour ne pas geler l'interface.
+    Interface graphique complète pour une partie d'échecs IA vs IA.
+
+    Le calcul du coup IA est délégué à un thread daemon pour éviter de
+    bloquer la boucle d'événements Tkinter pendant la réflexion.
+    La communication thread → UI passe exclusivement par root.after()
+    pour respecter le modèle mono-thread de Tkinter.
+
+    Attributs
+    ----------
+    root : Tk
+        Fenêtre racine Tkinter.
+    board : chess.Board
+        Plateau partagé entre l'UI et les deux joueurs IA.
+    Joueur_Blanc : JoueurIA
+        Instance du joueur IA qui joue les blancs.
+    Joueur_Noir : JoueurIA
+        Instance du joueur IA qui joue les noirs.
+    canvas : Canvas
+        Canvas Tkinter sur lequel le plateau et les pièces sont dessinés.
+    history_text : Text
+        Widget texte qui affiche l'historique des coups en notation SAN.
+    status_label : Label
+        Label affiché sous le plateau pour indiquer l'état du calcul.
+    pieces_list : list[int]
+        Identifiants des images de pièces actuellement dessinées sur le canvas
+        (utilisés pour les effacer avant chaque redraw).
+    _computing : bool
+        Verrou logique : True quand un thread de calcul est en cours,
+        pour éviter de lancer deux calculs simultanément.
+    img_dict : dict[str, ImageTk.PhotoImage]
+        Dictionnaire symbol_pièce → image chargée en mémoire.
     """
 
     def __init__(self, root, board, J_Blanc, J_Noir):
-        # Définition des images pour les pièces
+        """
+        Initialise l'interface graphique et démarre la partie après 1 seconde.
+
+        Paramètres
+        ----------
+        root : Tk
+            Fenêtre racine Tkinter.
+        board : chess.Board
+            Plateau de jeu partagé.
+        J_Blanc : JoueurIA
+            Joueur IA pour les blancs (doit exposer coup() → str SAN).
+        J_Noir : JoueurIA
+            Joueur IA pour les noirs (doit exposer coup() → str SAN).
+        """
         piece_size = 70
         self.img_dict = {
             'p': ImageTk.PhotoImage(Image.open('img/pion_noir.png').resize((piece_size, piece_size))),
@@ -33,14 +97,13 @@ class Chess_UI:
             'R': ImageTk.PhotoImage(Image.open('img/tour_blanche.png').resize((piece_size, piece_size))),
         }
 
-        self.root = root
-        self.board = board
-        self.Joueur_Blanc = J_Blanc
-        self.Joueur_Noir = J_Noir
-        self.mainframe = ttk.Frame(self.root)
+        self.root          = root
+        self.board         = board
+        self.Joueur_Blanc  = J_Blanc
+        self.Joueur_Noir   = J_Noir
+        self.mainframe     = ttk.Frame(self.root)
         self.mainframe.grid()
 
-        # Canvas pour l'échiquier
         self.canvas = Canvas(
             self.mainframe,
             bg="black",
@@ -49,12 +112,10 @@ class Chess_UI:
         )
         self.canvas.grid(row=0, column=0)
 
-        # Charger l'image du plateau
-        self.bg_img = Image.open('img/plateau.png').resize((board_width, board_height))
+        self.bg_img   = Image.open('img/plateau.png').resize((board_width, board_height))
         self.bg_photo = ImageTk.PhotoImage(self.bg_img)
         self.canvas.create_image(board_width / 2, board_height / 2, image=self.bg_photo)
 
-        # Historique à droite
         history_frame = Frame(self.mainframe, bg="white")
         history_frame.grid(row=0, column=1, sticky=(N, S), padx=10)
 
@@ -67,7 +128,6 @@ class Chess_UI:
         scrollbar.pack(side=RIGHT, fill=Y)
         self.history_text.config(yscrollcommand=scrollbar.set)
 
-        # Label de statut (indique quand l'IA réfléchit)
         self.status_label = Label(
             self.mainframe,
             text="",
@@ -78,23 +138,59 @@ class Chess_UI:
         self.status_label.grid(row=1, column=0, columnspan=2, pady=4)
 
         self.pieces_list = []
-        self._computing = False
+        self._computing  = False
         self.update_board()
 
-        # Lancer le premier coup après 1 seconde
         self.root.after(1000, self.jouer)
 
-    # ------------------------------------------------------------------
-    # Méthodes utilitaires
-    # ------------------------------------------------------------------
+    # ── Utilitaires de coordonnées ────────────────────────────────────────────
 
     def get_x_from_col(self, col: int) -> float:
+        """
+        Convertit un indice de colonne (0-7) en coordonnée X sur le canvas.
+
+        Paramètres
+        ----------
+        col : int
+            Colonne (0 = colonne a, 7 = colonne h).
+
+        Retourne
+        --------
+        float
+            Coordonnée X en pixels du centre de la case.
+        """
         return board_width / 8 * col + board_width / 16
 
     def get_y_from_row(self, row: int) -> float:
+        """
+        Convertit un indice de rangée (0-7) en coordonnée Y sur le canvas.
+
+        Paramètres
+        ----------
+        row : int
+            Rangée (0 = rangée 8 côté noir, 7 = rangée 1 côté blanc).
+
+        Retourne
+        --------
+        float
+            Coordonnée Y en pixels du centre de la case.
+        """
         return board_height / 8 * row + board_height / 16
 
-    def display_piece(self, piece, col: int, row: int) -> None:
+    def display_piece(self, piece: str, col: int, row: int) -> None:
+        """
+        Dessine une pièce sur le canvas à la case (col, row) et enregistre
+        son identifiant dans pieces_list pour pouvoir l'effacer plus tard.
+
+        Paramètres
+        ----------
+        piece : str
+            Symbole de la pièce ('P', 'n', 'Q', etc.).
+        col : int
+            Colonne de destination (0-7).
+        row : int
+            Rangée de destination (0-7).
+        """
         self.pieces_list.append(
             self.canvas.create_image(
                 self.get_x_from_col(col),
@@ -103,8 +199,14 @@ class Chess_UI:
             )
         )
 
-    def update_board(self):
-        """Mise à jour visuelle du plateau (toujours appelé depuis le thread principal)."""
+    def update_board(self) -> None:
+        """
+        Efface toutes les pièces actuellement affichées et les redessine
+        d'après le FEN courant du plateau.
+
+        Doit être appelé exclusivement depuis le thread principal Tkinter,
+        car il modifie des widgets.
+        """
         for piece in self.pieces_list:
             self.canvas.delete(piece)
         self.pieces_list = []
@@ -123,26 +225,39 @@ class Chess_UI:
 
         self.root.update_idletasks()
 
-    def add_to_history(self, coup, is_white):
+    def add_to_history(self, coup: str, is_white: bool) -> None:
+        """
+        Ajoute un coup à l'historique textuel.
+
+        Les coups blancs sont écrits avec leur numéro de coup sur la même
+        ligne ; le coup noir est ajouté à la suite, suivi d'un saut de ligne.
+
+        Paramètres
+        ----------
+        coup : str
+            Coup en notation SAN (ex. 'e4', 'Nf3', 'O-O').
+        is_white : bool
+            True si le coup vient des blancs, False pour les noirs.
+        """
         if is_white:
             self.history_text.insert(END, f"{self.board.fullmove_number}. {coup}  ")
         else:
             self.history_text.insert(END, f"{coup}\n")
         self.history_text.see(END)
 
-    # ------------------------------------------------------------------
-    # Logique de jeu avec threading
-    # ------------------------------------------------------------------
+    # ── Logique de jeu ────────────────────────────────────────────────────────
 
-    def jouer(self):
+    def jouer(self) -> None:
         """
-        Point d'entrée pour chaque coup.
-        Vérifie la fin de partie, puis délègue le calcul à un thread.
+        Point d'entrée pour chaque coup de la partie.
+
+        Vérifie d'abord si la partie est terminée (affiche le résultat le
+        cas échéant), puis lance le calcul IA dans un thread daemon via
+        _calcul_coup(). Le verrou _computing empêche deux lancements simultanés.
         """
         if self._computing:
-            return  # Sécurité : ne pas lancer deux calculs simultanément
+            return
 
-        # Vérification de la victoire
         if self.board.is_game_over():
             res = self.board.result()
             if res == "1-0":
@@ -163,38 +278,51 @@ class Chess_UI:
             return
 
         self._computing = True
-
-        # Lancer le calcul dans un thread séparé pour ne pas geler Tkinter
         thread = threading.Thread(target=self._calcul_coup, daemon=True)
         thread.start()
 
-    def _calcul_coup(self):
+    def _calcul_coup(self) -> None:
         """
-        Exécuté dans un thread secondaire.
-        Calcule le coup, puis repasse la main au thread principal via `after`.
+        Exécuté dans un thread secondaire (daemon).
+
+        Appelle coup() sur le joueur dont c'est le tour, puis repasse
+        le résultat au thread principal via root.after(0, ...) pour que
+        l'application du coup et la mise à jour de l'UI soient thread-safe.
+
+        En cas d'exception, libère le verrou _computing et affiche la
+        trace complète dans la console.
         """
         try:
             if self.board.turn == WHITE:
-                coup = self.Joueur_Blanc.coup()
+                coup     = self.Joueur_Blanc.coup()
                 is_white = True
                 print(f"Blancs : {coup}")
             else:
-                coup = self.Joueur_Noir.coup()
+                coup     = self.Joueur_Noir.coup()
                 is_white = False
                 print(f"Noirs : {coup}")
 
-            # Repasser au thread principal pour modifier le board et l'UI
             self.root.after(0, lambda: self._appliquer_coup(coup, is_white))
 
-        except Exception as e:
+        except Exception:
             import traceback
             traceback.print_exc()
             self._computing = False
 
-    def _appliquer_coup(self, coup, is_white):
+    def _appliquer_coup(self, coup: str, is_white: bool) -> None:
         """
-        Appelé depuis le thread principal après le calcul.
-        Met à jour le board, l'historique et l'affichage.
+        Appelé depuis le thread principal après que _calcul_coup a terminé.
+
+        Enregistre le coup dans l'historique, l'applique sur le plateau
+        python-chess, met à jour l'affichage visuel, libère le verrou
+        _computing, puis planifie le prochain coup dans 300 ms.
+
+        Paramètres
+        ----------
+        coup : str
+            Coup en notation SAN à appliquer.
+        is_white : bool
+            True si le coup vient des blancs.
         """
         try:
             self.add_to_history(coup, is_white)
@@ -207,5 +335,4 @@ class Chess_UI:
         finally:
             self._computing = False
             self.status_label.config(text="")
-            # Prochain coup après 300 ms
             self.root.after(300, self.jouer)
