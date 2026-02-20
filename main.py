@@ -132,7 +132,7 @@ def main() -> None:
            collectés par les deux IA, avec le vrai résultat comme cible.
         3. Sauvegarde memoire.json.
     """
-    print("♟️  Lancement de la partie d'échecs...\n")
+    print("Lancement de la partie d'échecs...\n")
 
     root  = Tk()
     root.title("IA d'Échecs")
