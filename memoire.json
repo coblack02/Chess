@@ -408,13 +408,13 @@
     "PENALITE_PIECE_CLOUEE": 25,
     "BONUS_TEMPO": 10,
     "WEIGHTS": {
-        "material": 5.103596301818618,
-        "psqt": 2.7438545677459434,
-        "mobility": -10.331984362803805,
-        "pawn_structure": 0.22821090225344787,
-        "king_safety": 1.056253347629526,
-        "rook_open_file": 3.861008469790181,
-        "bishop_pair": 0.08025326795234639
+        "material": -37.801575589678876,
+        "psqt": 8.504274252204615,
+        "mobility": -20.019394723398854,
+        "pawn_structure": -1.9923169679690482,
+        "king_safety": 5.757840735026985,
+        "rook_open_file": 1.3952924135062297,
+        "bishop_pair": 10.885131282609168
     },
     "PROFONDEUR": {
         "ouverture": 4,
@@ -422,4 +422,4 @@
         "fin": 6,
         "finfin": 9
     }
-}   
+}
