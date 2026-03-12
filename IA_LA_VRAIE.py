@@ -50,6 +50,20 @@ LOWERBOUND = 1
 UPPERBOUND = 2
 """Flag TT : borne supérieure — le vrai score est <= valeur stockée."""
 
+class _SearchTimeout(Exception):
+    """
+    Exception levée quand le temps de recherche est dépassé.
+    Propagée depuis alpha_beta jusqu'à ia_move qui la capture et retourne
+    le meilleur coup trouvé jusqu'ici. Cela garantit un arrêt IMMÉDIAT
+    dès que la deadline est atteinte, sans attendre la fin d'une profondeur.
+    """
+
+_deadline: float = float('inf')
+"""
+Timestamp (time.time()) au-delà duquel alpha_beta lève _SearchTimeout.
+Mis à jour par ia_move avant chaque recherche.
+"""
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DÉTECTION DE PHASE
 # ══════════════════════════════════════════════════════════════════════════════
@@ -731,6 +745,10 @@ def alpha_beta(TT, board, depth, alpha, beta,
     if board.is_game_over():
         return evaluate(board)
 
+    # Vérification du timeout — arrêt immédiat si la deadline est dépassée
+    if time.time() >= _deadline:
+        raise _SearchTimeout
+
     if cle in TT:
         entry = TT[cle]
         if entry["profondeur"] >= depth:
@@ -920,70 +938,83 @@ def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP, max_time: float = 10.0) -> che
     killers    = [set() for _ in range(depth + 2)]
     history    = {}
     root_cle   = hash_zobrist(board, ZP, ZR, ZE, ZT, IP)
+    root_fen   = board.fen()   # sauvegarde pour restaurer après un timeout
     best_move  = next(iter(board.legal_moves))
     prev_score = 0
     WINDOW     = 50
     start_time = time.time()
 
+    # Deadline partagée avec alpha_beta — arrêt immédiat à n'importe quel nœud
+    global _deadline
+    _deadline = start_time + max_time
+
     for current_depth in range(1, depth + 1):
+        try:
+            if current_depth >= 3:
+                alpha = prev_score - WINDOW
+                beta  = prev_score + WINDOW
 
-        if current_depth >= 3:
-            alpha = prev_score - WINDOW
-            beta  = prev_score + WINDOW
+                def priority_root(m):
+                    """Priorité racine : best_move en premier, puis MVV-LVA."""
+                    if m == best_move: return float('inf')
+                    s = mvv_lva(board, m)
+                    if board.is_capture(m): s += 5000
+                    if m.promotion:         s += 4000
+                    return s
 
-            def priority_root(m):
-                """Priorité racine : best_move en premier, puis MVV-LVA."""
-                if m == best_move: return float('inf')
-                s = mvv_lva(board, m)
-                if board.is_capture(m): s += 5000
-                if m.promotion:         s += 4000
-                return s
+                iter_best  = None
+                iter_score = -float('inf')
+                fail       = False
 
-            iter_best  = None
-            iter_score = -float('inf')
-            fail       = False
+                for move in sorted(board.legal_moves, key=priority_root, reverse=True):
+                    new_cle = update_cle(board, root_cle, move, ZP, ZR, ZE, ZT, IP)
+                    board.push(move)
+                    score = -alpha_beta(TT, board, current_depth - 1, -beta, -alpha,
+                                        ZP, ZR, ZE, ZT, IP, new_cle, killers, history)
+                    board.pop()
 
-            for move in sorted(board.legal_moves, key=priority_root, reverse=True):
-                new_cle = update_cle(board, root_cle, move, ZP, ZR, ZE, ZT, IP)
-                board.push(move)
-                score = -alpha_beta(TT, board, current_depth - 1, -beta, -alpha,
-                                    ZP, ZR, ZE, ZT, IP, new_cle, killers, history)
-                board.pop()
+                    if score > iter_score:
+                        iter_score = score
+                        iter_best  = move
 
-                if score > iter_score:
-                    iter_score = score
-                    iter_best  = move
+                    if score > alpha:
+                        alpha = score
+                    if alpha >= beta:
+                        fail = True
+                        break
 
-                if score > alpha:
-                    alpha = score
-                if alpha >= beta:
-                    fail = True
-                    break
-
-            if fail or iter_best is None or abs(iter_score - prev_score) > WINDOW:
+                if fail or iter_best is None or abs(iter_score - prev_score) > WINDOW:
+                    iter_best, iter_score = _recherche_complete(
+                        board, current_depth, root_cle,
+                        TT, ZP, ZR, ZE, ZT, IP, killers, history,
+                        best_first=best_move
+                    )
+            else:
                 iter_best, iter_score = _recherche_complete(
                     board, current_depth, root_cle,
                     TT, ZP, ZR, ZE, ZT, IP, killers, history,
                     best_first=best_move
                 )
-        else:
-            iter_best, iter_score = _recherche_complete(
-                board, current_depth, root_cle,
-                TT, ZP, ZR, ZE, ZT, IP, killers, history,
-                best_first=best_move
-            )
 
-        if iter_best is not None:
-            best_move  = iter_best
-            prev_score = iter_score
+            if iter_best is not None:
+                best_move  = iter_best
+                prev_score = iter_score
 
-        elapsed = time.time() - start_time
+            elapsed = time.time() - start_time
+            print(f"  Profondeur {current_depth}/{depth} ({phase}) - {elapsed:.2f}s")
 
+            if elapsed > max_time:
+                print(f"  Temps ecoule ({elapsed:.2f}s), arret a profondeur {current_depth}")
+                break
 
-        if elapsed > max_time:
-            print(f"  Temps écoulé ({elapsed:.2f}s), arrêt à profondeur {current_depth}")
+        except _SearchTimeout:
+            # Le board peut avoir des coups pushes non depiles — on repart du FEN racine
+            board.set_fen(root_fen)
+            elapsed = time.time() - start_time
+            print(f"  Timeout a profondeur {current_depth} ({elapsed:.2f}s) - coup garde : {best_move.uci()}")
             break
 
+    _deadline = float('inf')   # reset pour ne pas bloquer les appels suivants
     return best_move
 
 
