@@ -928,10 +928,10 @@ def ia_move(TT, board, depth, ZP, ZR, ZE, ZT, IP, max_time: float = 10.0) -> che
 
     phase      = get_game_phase(board)
     time_limits = {
-        "ouverture": 2.0,
-        "milieu":    4.0,
-        "fin":       5.0,
-        "finfin":    6.0,
+        "ouverture": 10.0,
+        "milieu":    10.0,
+        "fin":       10.0,
+        "finfin":    10.0,
     }
     max_time = time_limits[phase]
 
